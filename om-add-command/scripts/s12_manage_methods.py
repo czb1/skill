@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import TYPE_CHECKING, List
 from context import WorkflowContext, StepExecutionError
-from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli
+from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli, DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -60,7 +60,7 @@ def add_method(
         context,
         ["method", "add-name", "--body", body],
         step_name="add_method",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     context.set_state(f"method_added_{commandType}", True)
@@ -120,7 +120,7 @@ def update_method_name(
         context,
         ["method", "update-name", "--body", body],
         step_name="update_method_name",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     context.set_state("mmlCommandName", mmlCommandName)
@@ -159,7 +159,7 @@ def delete_methods(context: WorkflowContext, methodIds: List[int], moduleName: s
         context,
         ["method", "delete-name", "--body", body],
         step_name="delete_methods",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     context.set_state("methods_deleted", True)
@@ -192,7 +192,7 @@ def query_method_info(context: WorkflowContext, mocId: int = None) -> dict:
         context,
         ["method", "select-info", "--body", body],
         step_name="query_method_info",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     context.set_state("method_list", result.get("data", []))

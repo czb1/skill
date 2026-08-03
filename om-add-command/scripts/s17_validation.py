@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import TYPE_CHECKING, List, Dict, Any
 from context import WorkflowContext, StepExecutionError
-from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli
+from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli, DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -53,7 +53,7 @@ def shield_errors(context: WorkflowContext, error_codes: str = "2017") -> dict:
         context,
         ["errorcode", "shield", "--body", body],
         step_name="shield_errors",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     return result
@@ -85,7 +85,7 @@ def start_validation(context: WorkflowContext, isCommitAndPush: int = 0, auto_sh
         context,
         ["validate", "do", "--body", body],
         step_name="start_validation",
-        timeout=120
+        timeout=_DEFAULT_TIMEOUT
     )
 
     # 校验可能返回status=false但data=true的情况(如"未通过")
@@ -108,7 +108,7 @@ def start_validation(context: WorkflowContext, isCommitAndPush: int = 0, auto_sh
                     context,
                     ["validate", "do", "--body", body],
                     step_name="start_validation_retry",
-                    timeout=120
+                    timeout=_DEFAULT_TIMEOUT
                 )
                 is_passed = result.get("data") == True
                 context.set_state("validation_passed", is_passed)
@@ -151,7 +151,7 @@ def query_validation_result(context: WorkflowContext, level: str = "ERROR") -> d
         context,
         ["validate", "result", "--body", body],
         step_name="query_validation_result",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     # 提取错误列表
@@ -187,7 +187,7 @@ def export_model(context: WorkflowContext, version: str = "1", max_wait: int = 3
         context,
         ["task", "export-struct", str(task_id), task_name, version],
         step_name="export_model",
-        timeout=120
+        timeout=_DEFAULT_TIMEOUT
     )
 
     print(f"  [DEBUG] 触发导出成功，开始轮询等待...")
@@ -201,7 +201,7 @@ def export_model(context: WorkflowContext, version: str = "1", max_wait: int = 3
                 context,
                 ["task", "export-result", str(task_id), task_name],
                 step_name="export_model_poll",
-                timeout=60
+                timeout=_DEFAULT_TIMEOUT
             )
         except StepExecutionError:
             time.sleep(3)
@@ -218,7 +218,7 @@ def export_model(context: WorkflowContext, version: str = "1", max_wait: int = 3
                     context,
                     ["task", "download", str(task_id), task_name],
                     step_name="export_model_download",
-                    timeout=300
+                    timeout=_DEFAULT_TIMEOUT
                 )
             except StepExecutionError as e:
                 raise StepExecutionError(
@@ -279,7 +279,7 @@ def get_export_status(context: WorkflowContext) -> dict:
         context,
         ["task", "export-result", str(task_id), task_name],
         step_name="get_export_status",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     context.set_state("export_status", result)
@@ -316,7 +316,7 @@ def detect_codehub_repo_info(repo_path: str) -> dict:
     try:
         proc = subprocess.run(
             ['git', 'remote', 'get-url', 'origin'],
-            capture_output=True, text=True, encoding='utf-8', timeout=30, cwd=repo_path
+            capture_output=True, text=True, encoding='utf-8', timeout=_DEFAULT_TIMEOUT, cwd=repo_path
         )
     except (OSError, subprocess.SubprocessError):
         return empty
@@ -687,7 +687,7 @@ def create_mr_on_codehub(source_branch: str, target_branch: str = "master",
 
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8',
-                              timeout=120, cwd=workdir)
+                              timeout=_DEFAULT_TIMEOUT, cwd=workdir)
     except FileNotFoundError:
         raise StepExecutionError(
             step_name="create_mr_on_codehub",

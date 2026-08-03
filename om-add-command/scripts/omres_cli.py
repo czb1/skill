@@ -40,6 +40,52 @@ _SESSION_FILE_NAME = "session.json"
 # 需要保留旧行为（强行用 context.base_url 覆盖 server）时的逃生门
 _SERVER_OVERRIDE_ENV = "OMRES_ALLOW_SERVER_OVERRIDE"
 
+
+def _default_timeout() -> int:
+    """
+    所有子进程调用统一的超时秒数
+
+    整包（20 个服务目录）上传/解析在后端要跑好几分钟，原先 60/120 秒会在
+    客户端提前掐断。可用 OMRES_CLI_TIMEOUT 覆盖。
+    """
+    raw = os.environ.get("OMRES_CLI_TIMEOUT", "").strip()
+    if raw:
+        try:
+            value = int(raw)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+    return 300
+
+
+# 各 sXX 脚本统一引用这个常量，不要再写死秒数
+DEFAULT_TIMEOUT = _default_timeout()
+
+# omres-cli(Go) 自身或后端网关的请求超时特征串
+_DEADLINE_MARKERS = ("context deadline exceeded", "deadline exceeded", "client.timeout")
+
+
+def deadline_hint(*texts: str) -> str:
+    """
+    识别 omres-cli/后端侧的请求超时，给一句可操作的提示
+
+    这类超时和本脚本的 subprocess 超时是两回事：调大 OMRES_CLI_TIMEOUT 不解决，
+    容易被误读成"客户端超时时间不够"。
+
+    Returns:
+        str: 命中时返回提示，否则返回空字符串
+    """
+    blob = " ".join(t for t in texts if t).lower()
+    if any(marker in blob for marker in _DEADLINE_MARKERS):
+        return (
+            "；注意这是 omres-cli/后端侧的请求超时，不是本脚本的 subprocess 超时"
+            f"（当前 {DEFAULT_TIMEOUT}s，调大 OMRES_CLI_TIMEOUT 对它无效）。"
+            "整包（全部服务目录）解析耗时过长时，请只打包目标服务目录后重试"
+        )
+    return ""
+
+
 # server 不一致的告警只打一次，避免刷屏
 _server_mismatch_warned = False
 
@@ -201,7 +247,7 @@ def _strip_cli_prefix(args: list) -> list:
     return list(args)
 
 
-def run_cli(context: WorkflowContext, args: list, step_name: str, timeout: int = 60) -> dict:
+def run_cli(context: WorkflowContext, args: list, step_name: str, timeout: int = DEFAULT_TIMEOUT) -> dict:
     """
     执行omres-cli命令并解析JSON-RPC 2.0输出
 
@@ -249,7 +295,7 @@ def run_cli(context: WorkflowContext, args: list, step_name: str, timeout: int =
         stderr_msg = proc.stderr.strip() if proc.stderr else ""
         raise StepExecutionError(
             step_name=step_name,
-            message=f"命令返回为空, stderr: {stderr_msg[:200]}",
+            message=f"命令返回为空, stderr: {stderr_msg[:200]}{deadline_hint(stderr_msg)}",
             context_state=context.state
         )
 
@@ -274,7 +320,7 @@ def run_cli(context: WorkflowContext, args: list, step_name: str, timeout: int =
                 error_msg = data
         raise StepExecutionError(
             step_name=step_name,
-            message=f"命令执行失败: {error_msg}",
+            message=f"命令执行失败: {error_msg}{deadline_hint(error_msg)}",
             context_state=context.state
         )
 

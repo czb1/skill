@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import TYPE_CHECKING
 from context import WorkflowContext, StepExecutionError
-from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli
+from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli, DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -96,7 +96,7 @@ def create_moc(
         context,
         ["moc", "add-name", "--body", body],
         step_name="create_moc",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     # 更新上下文状态
@@ -148,7 +148,7 @@ def query_moc_list(context: WorkflowContext, moduleId: int = None) -> dict:
         context,
         ["moc", "select-name", "--body", body],
         step_name="query_moc_list",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     # 查找当前创建的mocId

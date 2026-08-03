@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import TYPE_CHECKING, Dict, Any, List, Optional
 from context import WorkflowContext, StepExecutionError
-from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli
+from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli, DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -60,7 +60,7 @@ def add_command_branch(
         context,
         ["command-branch", "upsert", "--body", body],
         step_name="add_command_branch",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     print(f"  [DEBUG] add_command_branch成功")
@@ -96,7 +96,7 @@ def query_command_branches(
         context,
         ["command-branch", "list", "--body", body],
         step_name="query_command_branches",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     branches = result.get("data", [])
@@ -136,7 +136,7 @@ def get_enum_item_id(
         context,
         ["datatype", "query-all", "--body", body],
         step_name="get_enum_item_id",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     enum_list = result.get("data", [])
@@ -191,7 +191,7 @@ def get_mml_para_id_by_field_id(
         context,
         ["mml-para", "list", "--body", body],
         step_name="get_mml_para_id_by_field_id",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     para_list = result.get("data", [])
@@ -294,7 +294,7 @@ def get_command_para_id_by_name(
         context,
         ["command-para", "list", "--body", body],
         step_name="get_command_para_id_by_name",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     para_list = result.get("data", [])
@@ -347,7 +347,7 @@ def get_enum_item_id_by_value(
         context,
         ["mml-para", "list", "--body", para_body],
         step_name="get_enum_item_id_by_value_step1",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     para_list = para_result.get("data", [])
@@ -380,7 +380,7 @@ def get_enum_item_id_by_value(
         context,
         ["datatype", "enum-query-all", "--body", query_body],
         step_name="get_enum_item_id_by_value_step2",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     print(f"  [DEBUG] enum-query-all响应完成")

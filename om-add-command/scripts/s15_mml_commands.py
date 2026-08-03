@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import TYPE_CHECKING, Dict, Any, List, Optional
 from context import WorkflowContext, StepExecutionError
-from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli
+from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli, DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -155,7 +155,7 @@ def create_mml_command(
         context,
         ["mml-command", "upsert", "--body", body],
         step_name="create_mml_command",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     # 验证更新是否成功 - 查询MML命令详情
@@ -165,7 +165,7 @@ def create_mml_command(
             context,
             ["mml-command", "get", "--body", verify_body],
             step_name="create_mml_command_verify",
-            timeout=60
+            timeout=_DEFAULT_TIMEOUT
         )
         verify_data = verify_result.get("data", {})
         print(f"  [DEBUG] create_mml_command验证查询:")
@@ -240,7 +240,7 @@ def add_command_para(
         context,
         ["mml-para", "list", "--body", query_para_body],
         step_name="add_command_para_query_mml_para",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
     if isinstance(query_para_result, dict):
         para_list = query_para_result.get("data", [])
@@ -287,7 +287,7 @@ def add_command_para(
         context,
         ["command-para", "upsert", "--body", body],
         step_name="add_command_para",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     # 查询命令参数列表确认是否添加成功
@@ -297,7 +297,7 @@ def add_command_para(
             context,
             ["command-para", "list", "--body", list_body],
             step_name="add_command_para_verify",
-            timeout=60
+            timeout=_DEFAULT_TIMEOUT
         )
         print(f"  [DEBUG] commandPara/list查询完成")
     except StepExecutionError:
@@ -340,7 +340,7 @@ def select_by_id_mml_command(
         context,
         ["mml-command", "get", "--body", body],
         step_name="select_by_id_mml_command",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     # 从响应中提取mmlCommandId并保存到context
@@ -394,7 +394,7 @@ def add_command_branch(
         context,
         ["command-branch", "upsert", "--body", body],
         step_name="add_command_branch",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     return result

@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import TYPE_CHECKING, List, Dict, Any
 from context import WorkflowContext, StepExecutionError
-from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli
+from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli, DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -42,7 +42,7 @@ def query_info_module_id(context: WorkflowContext, service_name: str) -> int:
         context,
         ["info-module", "query-all", "--body", body],
         step_name="query_info_module_id",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     module_list = result.get("data", [])
@@ -99,7 +99,7 @@ def add_error_code(
         context,
         ["info-code", "add", "--body", body],
         step_name="add_error_code",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     print(f"  ✓ 错误码 {infoCodeName} 添加成功")
@@ -126,7 +126,7 @@ def query_error_codes(context: WorkflowContext) -> dict:
         context,
         ["info-code", "list", "--body", body],
         step_name="query_error_codes",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     context.set_state("error_codes", result.get("data", []))
@@ -211,7 +211,7 @@ def insert_moc_info_with_lua(
         context,
         ["moc", "insert-info", "--body", body],
         step_name="insert_moc_info",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     print(f"  ✓ MOC {moc_name} 与Lua脚本 {lua_file_name} 关联成功")
@@ -253,7 +253,7 @@ def generate_lua_script(
         context,
         ["moc", "generate-script", str(task_id), str(moc_id), moc_name, script_oper, str(is_generate_code)],
         step_name="generate_lua_script",
-        timeout=120
+        timeout=_DEFAULT_TIMEOUT
     )
 
     # omres-cli generate-script会将二进制文件保存到临时文件，result中包含file路径

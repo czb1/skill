@@ -14,7 +14,7 @@ import json
 import shutil
 from typing import TYPE_CHECKING, List
 from context import WorkflowContext, StepExecutionError
-from omres_cli import find_omres_cli as _find_omres_cli, server_args as _server_args
+from omres_cli import find_omres_cli as _find_omres_cli, server_args as _server_args, DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT, deadline_hint as _deadline_hint
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -67,7 +67,7 @@ def create_zip_package(source_dir: str, output_path: str = None) -> str:
     return output_path
 
 
-def _run_omres_cli(cmd: list, context: WorkflowContext, step_name: str, timeout: int = 120) -> dict:
+def _run_omres_cli(cmd: list, context: WorkflowContext, step_name: str, timeout: int = _DEFAULT_TIMEOUT) -> dict:
     """
     执行omres-cli命令并解析JSON-RPC输出
 
@@ -113,7 +113,7 @@ def _run_omres_cli(cmd: list, context: WorkflowContext, step_name: str, timeout:
         stderr_msg = proc.stderr.strip() if proc.stderr else ""
         raise StepExecutionError(
             step_name=step_name,
-            message=f"命令返回为空, stderr: {stderr_msg[:200]}",
+            message=f"命令返回为空, stderr: {stderr_msg[:200]}{_deadline_hint(stderr_msg)}",
             context_state=context.state
         )
 
@@ -138,7 +138,7 @@ def _run_omres_cli(cmd: list, context: WorkflowContext, step_name: str, timeout:
                 error_msg = data
         raise StepExecutionError(
             step_name=step_name,
-            message=f"omres-cli执行失败: {error_msg}",
+            message=f"omres-cli执行失败: {error_msg}{_deadline_hint(error_msg)}",
             context_state=context.state
         )
 
@@ -203,7 +203,7 @@ def upload_file(context: WorkflowContext, source_dir: str = None, file_path: str
         "--file", file_path,
     ]
 
-    result = _run_omres_cli(cmd, context, "upload_file", timeout=120)
+    result = _run_omres_cli(cmd, context, "upload_file", timeout=_DEFAULT_TIMEOUT)
 
     # 提取上传路径
     path = result.get("path") or result.get("data", {}).get("path")

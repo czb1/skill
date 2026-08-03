@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import TYPE_CHECKING, Dict, Any, List
 from context import WorkflowContext, StepExecutionError
-from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli
+from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli, DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -66,7 +66,7 @@ def add_field(
         context,
         ["moc-field", "add-name", "--body", body],
         step_name="add_field",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     context.set_state(f"field_added_{fieldName}", True)
@@ -102,7 +102,7 @@ def query_field_list(context: WorkflowContext, mocId: int = None, moduleId: int 
         context,
         ["moc-field", "select-name", "--body", body],
         step_name="query_field_list",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     # 提取fieldId映射
@@ -202,7 +202,7 @@ def update_field_info(
         context,
         ["moc-field", "update-info", "--body", body],
         step_name="update_field_info",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     context.set_state(f"field_type_set_{fieldName}", True)
@@ -237,7 +237,7 @@ def add_default_record(context: WorkflowContext, defaultRecords: Dict[str, str],
         context,
         ["default-record", "add", "--body", body],
         step_name="add_default_record",
-        timeout=60
+        timeout=_DEFAULT_TIMEOUT
     )
 
     context.set_state("default_record_added", True)
@@ -275,7 +275,7 @@ def add_default_records(context: WorkflowContext, defaultRecordsList: List[Dict[
                 context,
                 ["default-record", "add", "--body", body],
                 step_name="add_default_records",
-                timeout=60
+                timeout=_DEFAULT_TIMEOUT
             )
         except StepExecutionError as e:
             print(f"  [WARNING] 添加第{idx+1}行默认值记录失败: {e.message}")

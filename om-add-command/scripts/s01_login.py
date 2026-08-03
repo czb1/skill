@@ -33,6 +33,7 @@ from omres_cli import (
     session_server as _session_server,
     server_args as _server_args,
     align_context_server as _align_context_server,
+    DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT,
 )
 
 if TYPE_CHECKING:
@@ -127,7 +128,7 @@ def _run_auth_status(context: WorkflowContext = None, online: bool = False) -> d
     try:
         proc = subprocess.run(
             cmd,
-            capture_output=True, text=True, encoding='utf-8', timeout=30
+            capture_output=True, text=True, encoding='utf-8', timeout=_DEFAULT_TIMEOUT
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         return {"returncode": None, "result": {}, "raw": "", "stderr": str(e)}

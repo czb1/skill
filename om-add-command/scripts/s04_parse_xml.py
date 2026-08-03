@@ -13,13 +13,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import TYPE_CHECKING
 from context import WorkflowContext, StepExecutionError
-from omres_cli import find_omres_cli as _find_omres_cli, server_args as _server_args
+from omres_cli import find_omres_cli as _find_omres_cli, server_args as _server_args, DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT, deadline_hint as _deadline_hint
 
 if TYPE_CHECKING:
     from typing import Optional
 
 
-def _run_omres_cli(cmd: list, context: WorkflowContext, step_name: str, timeout: int = 120) -> dict:
+def _run_omres_cli(cmd: list, context: WorkflowContext, step_name: str, timeout: int = _DEFAULT_TIMEOUT) -> dict:
     """
     执行omres-cli命令并解析JSON-RPC输出
 
@@ -65,7 +65,7 @@ def _run_omres_cli(cmd: list, context: WorkflowContext, step_name: str, timeout:
         stderr_msg = proc.stderr.strip() if proc.stderr else ""
         raise StepExecutionError(
             step_name=step_name,
-            message=f"命令返回为空, stderr: {stderr_msg[:200]}",
+            message=f"命令返回为空, stderr: {stderr_msg[:200]}{_deadline_hint(stderr_msg)}",
             context_state=context.state
         )
 
@@ -90,7 +90,7 @@ def _run_omres_cli(cmd: list, context: WorkflowContext, step_name: str, timeout:
                 error_msg = data
         raise StepExecutionError(
             step_name=step_name,
-            message=f"omres-cli执行失败: {error_msg}",
+            message=f"omres-cli执行失败: {error_msg}{_deadline_hint(error_msg)}",
             context_state=context.state
         )
 
@@ -157,7 +157,7 @@ def parse_xml(context: WorkflowContext, fileName: str = None, path: str = None, 
         "--body", body,
     ]
 
-    result = _run_omres_cli(cmd, context, "parse_xml", timeout=120)
+    result = _run_omres_cli(cmd, context, "parse_xml", timeout=_DEFAULT_TIMEOUT)
 
     # 更新上下文状态
     context.set_state("parse_xml_result", result)

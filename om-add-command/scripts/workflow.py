@@ -42,7 +42,7 @@ if sys.platform == 'win32' and sys.stdout and hasattr(sys.stdout, 'buffer'):
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from context import WorkflowContext, create_context, StepExecutionError
-from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli
+from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli, DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT
 
 # 导入所有Skill
 from s01_login import ensure_authenticated, get_authenticated_username
@@ -112,7 +112,7 @@ def fetch_service_map(context: WorkflowContext) -> dict:
 
     body = json.dumps({"projectId": str(task_id)}, ensure_ascii=False)
     try:
-        result = _run_cli(context, ["overallview", "search", "--body", body], "fetch_service_map", timeout=60)
+        result = _run_cli(context, ["overallview", "search", "--body", body], "fetch_service_map", timeout=_DEFAULT_TIMEOUT)
     except StepExecutionError as e:
         print(f"  [WARNING] fetch_service_map失败: {e}")
         return SERVICE_MAP

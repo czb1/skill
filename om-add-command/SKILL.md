@@ -281,6 +281,12 @@ workflow.py通过`fetch_service_map()`在创建工程后调用 `omres-cli overal
 - 这是一个容易误诊的故障：地址被覆盖后 cookie 带不过去，后端返回 `noLogin`，但 `omres-cli auth status` 只看本地会话，仍然显示「已认证」，看起来像会话过期。判断依据是**不带 `--server` 直接跑 omres-cli 能成功**。
 - 极少数需要保留旧行为（强行用 `base_url` 覆盖 server）的场景，设置环境变量 `OMRES_ALLOW_SERVER_OVERRIDE=1`。
 
+## 超时说明
+
+- 所有子进程调用统一使用 `omres_cli.DEFAULT_TIMEOUT`（**300 秒**），不再各处写死 60/120 秒。需要调整只改这一处，或设置环境变量 `OMRES_CLI_TIMEOUT=<秒>`。
+- 整包（全部服务目录）上传/解析在后端要跑好几分钟，原先 60/120 秒会在客户端提前掐断。
+- **区分两种超时**：报错里出现 `context deadline exceeded` 时，那是 omres-cli(Go) 或后端网关自己的请求截止时间，**调大 `OMRES_CLI_TIMEOUT` 不解决**（omres-cli 未提供对应开关）。这时应缩小上传范围——只打包目标服务目录，而不是把 om 下 20 个服务全打进 zip。脚本会在错误信息里自动附上这条提示。
+
 ## 执行方式
 
 在PowerShell中执行（Windows环境）：
