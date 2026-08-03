@@ -20,10 +20,12 @@ from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli
 if TYPE_CHECKING:
     from typing import Optional
 
-# CodeHub 相关默认值（可用环境变量覆盖）。
-# 鉴权由用户在阶段零统一完成的 `codehub-cli auth login` 提供，本脚本不持有任何 token。
-CODEHUB_PROJECT = os.environ.get("CODEHUB_PROJECT", "UPCF/ComConfig")
-CODEHUB_HOST = os.environ.get("CODEHUB_HOST", "https://codehub-y.huawei.com")
+# CodeHub 相关默认值。鉴权由用户在阶段零统一完成的 `codehub-cli auth login` 提供，
+# 本脚本不持有、不传递任何 token（codehub-cli 自身的 -t/--token 与 CODEHUB_TOKEN 也不使用）。
+# 留空表示「从代码仓的 git remote 自动推断」，推断不出来再用 DEFAULT_CODEHUB_PROJECT。
+CODEHUB_PROJECT = os.environ.get("CODEHUB_PROJECT", "")
+CODEHUB_HOST = os.environ.get("CODEHUB_HOST", "")
+DEFAULT_CODEHUB_PROJECT = "UPCF/ComConfig"
 
 
 def shield_errors(context: WorkflowContext, error_codes: str = "2017") -> dict:
@@ -290,7 +292,56 @@ def _find_codehub_cli() -> str:
     override = os.environ.get("CODEHUB_CLI")
     if override and os.path.isfile(override):
         return override
-    return shutil.which("codehub-cli") or shutil.which("codehub-cli.cmd") or "codehub-cli"
+    return (shutil.which("codehub-cli") or shutil.which("codehub-cli.cmd")
+            or shutil.which("codehub-cli.exe") or "codehub-cli")
+
+
+def detect_codehub_repo_info(repo_path: str) -> dict:
+    """
+    从代码仓的 git remote 推断 CodeHub Host 与项目路径
+
+    例：https://szv-y.codehub.huawei.com/UPCF/ComConfig.git
+        -> {"host": "https://szv-y.codehub.huawei.com", "project": "UPCF/ComConfig"}
+
+    Args:
+        repo_path: 本地代码仓路径
+
+    Returns:
+        dict: {"host": str|None, "project": str|None}
+    """
+    empty = {"host": None, "project": None}
+    if not repo_path or not os.path.isdir(repo_path):
+        return empty
+
+    try:
+        proc = subprocess.run(
+            ['git', 'remote', 'get-url', 'origin'],
+            capture_output=True, text=True, encoding='utf-8', timeout=30, cwd=repo_path
+        )
+    except (OSError, subprocess.SubprocessError):
+        return empty
+
+    url = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not url:
+        return empty
+
+    if url.startswith("git@"):
+        # git@host:group/project.git
+        host_part, _, path_part = url[4:].partition(":")
+        host = f"https://{host_part}" if host_part else None
+    else:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if not parsed.netloc:
+            return empty
+        host = f"{parsed.scheme or 'https'}://{parsed.netloc}"
+        path_part = parsed.path
+
+    project = path_part.strip("/")
+    if project.endswith(".git"):
+        project = project[:-4]
+
+    return {"host": host, "project": project or None}
 
 
 def extract_zip_package(zip_path: str, extract_to: str, service_name: str = None) -> str:
@@ -578,20 +629,27 @@ def _parse_mr_output(output: str) -> dict:
 def create_mr_on_codehub(source_branch: str, target_branch: str = "master",
                          title: str = None, description: str = None,
                          project: str = None, host: str = None,
-                         project_id: str = None) -> dict:
+                         repo_path: str = None, project_id: str = None) -> dict:
     """
     通过 codehub-cli 在CodeHub上创建MR
 
     鉴权复用 `codehub-cli auth login` 的登录态（由用户在阶段零统一完成），
-    本函数不读取、不传递任何 token；未认证时直接失败返回，由主代理提示用户重新登录。
+    本函数不读取、不传递任何 token（不使用 -t/--token 与 CODEHUB_TOKEN）；
+    未认证时直接失败返回，由主代理提示用户重新登录。
+
+    项目与Host的取值顺序：显式参数 → CODEHUB_PROJECT / CODEHUB_HOST 环境变量
+    → 从 repo_path 的 git remote 推断 → 项目兜底 DEFAULT_CODEHUB_PROJECT、
+    Host 交给 codehub-cli 自身的配置。命令在 repo_path 下执行，
+    codehub-cli 自带的仓库探测也能生效。
 
     Args:
         source_branch: 源分支
         target_branch: 目标分支
         title: MR标题
         description: MR描述
-        project: 项目路径（如 UPCF/ComConfig），默认取 CODEHUB_PROJECT
-        host: CodeHub地址，默认取 CODEHUB_HOST
+        project: 项目路径（如 UPCF/ComConfig）
+        host: CodeHub地址（如 https://szv-y.codehub.huawei.com）
+        repo_path: 本地代码仓路径，用于推断项目/Host并作为命令的工作目录
         project_id: 已废弃，等价于project（兼容旧调用，支持URL编码形式）
 
     Returns:
@@ -602,25 +660,34 @@ def create_mr_on_codehub(source_branch: str, target_branch: str = "master",
     """
     from urllib.parse import unquote
 
-    project = project or (unquote(project_id) if project_id else None) or CODEHUB_PROJECT
-    host = host or CODEHUB_HOST
+    detected = detect_codehub_repo_info(repo_path)
+    project = (project or (unquote(project_id) if project_id else None)
+               or CODEHUB_PROJECT or detected["project"] or DEFAULT_CODEHUB_PROJECT)
+    host = host or CODEHUB_HOST or detected["host"]
 
     if title is None:
         title = "[WIP] feat: 添加MML命令"
 
     cli_path = _find_codehub_cli()
-    cmd = [
-        cli_path, "mr", "create",
-        "-p", project,
-        "-H", host,
+    cmd = [cli_path, "mr", "create", "-p", project]
+    if host:
+        cmd.extend(["-H", host])
+    cmd.extend([
         "--source-branch", source_branch,
         "--target-branch", target_branch,
         "--title", title,
         "--description", description or "",
-    ]
+        "-f", "json",
+    ])
+
+    print(f"  [DEBUG] codehub-cli mr create: project={project}, host={host or '(cli默认)'}, "
+          f"{source_branch} -> {target_branch}")
+
+    workdir = repo_path if repo_path and os.path.isdir(repo_path) else None
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=120)
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8',
+                              timeout=120, cwd=workdir)
     except FileNotFoundError:
         raise StepExecutionError(
             step_name="create_mr_on_codehub",
@@ -946,7 +1013,13 @@ def export_sync_and_create_mr(
     if len(changed_files) > 20:
         description += f"\n- ... 还有 {len(changed_files) - 20} 个文件"
 
-    mr_result = create_mr_on_codehub(target_branch, "master", f"[WIP] feat: 添加{moc_name or 'MML命令'}", description)
+    mr_result = create_mr_on_codehub(
+        target_branch,
+        "master",
+        f"[WIP] feat: 添加{moc_name or 'MML命令'}",
+        description,
+        repo_path=repo_path
+    )
 
     print("  清理临时文件...")
     if os.path.exists(extracted_dir):

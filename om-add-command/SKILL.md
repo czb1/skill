@@ -42,9 +42,18 @@ description: OM工具自动化技能，自动化创建任意MML命令（SET/LST/
 
 ### codehub-cli 登录态（创建MR用）
 
-校验通过后的「提交Git并创建MR」同样复用统一登录：MR 通过 `codehub-cli mr create` 创建，鉴权来自阶段零完成的 `codehub-cli auth login`，**skill 不再读取任何 CodeHub token**（原先从本地 `config.json` 读 `codehub_token` 的方式已废弃）。
+校验通过后的「提交Git并创建MR」同样复用统一登录：MR 通过 `codehub-cli mr create` 创建，鉴权来自阶段零完成的 `codehub-cli auth login`，**skill 不再读取任何 CodeHub token**（原先从本地 `config.json` 读 `codehub_token` 的方式已废弃，也不使用 codehub-cli 的 `-t/--token` 与 `CODEHUB_TOKEN`）。
 
-- 项目与Host默认 `UPCF/ComConfig`、`https://codehub-y.huawei.com`，可用环境变量 `CODEHUB_PROJECT` / `CODEHUB_HOST` 覆盖，也可在调用 `create_mr_on_codehub()` 时用 `project` / `host` 参数传入。
+实际执行的命令形如（在代码仓目录下执行，便于 codehub-cli 自身的仓库探测生效）：
+
+```bash
+codehub-cli mr create -p UPCF/ComConfig -H https://szv-y.codehub.huawei.com \
+  --source-branch <本次分支> --target-branch master \
+  --title "[WIP] feat: 添加xxx" --description "..." -f json
+```
+
+- **项目与Host自动推断**：取值顺序为 显式参数 → `CODEHUB_PROJECT` / `CODEHUB_HOST` 环境变量 → 代码仓 `git remote get-url origin` 推断（如 `https://szv-y.codehub.huawei.com/UPCF/ComConfig.git` → project `UPCF/ComConfig`、host `https://szv-y.codehub.huawei.com`）→ 项目兜底 `UPCF/ComConfig`、Host 交给 codehub-cli 自身配置。
+- 输出用 `-f json`，解析失败时再从文本里正则提取 `.../merge_requests/<iid>`，返回 `{'mr_url', 'mr_iid'}`。
 - codehub-cli 不在 PATH 时可用 `CODEHUB_CLI` 环境变量指定可执行文件全路径。
 - 若 codehub-cli 报未认证，同样是**直接失败返回**，由主代理提示用户执行 `codehub-cli auth login` 后重跑，不代为登录。
 
