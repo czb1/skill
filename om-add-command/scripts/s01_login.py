@@ -8,6 +8,11 @@ omres-cli 的登录已由上游（E2E 阶段零 Step 1）统一完成，登录�
 本模块只做**校验**：执行 `omres-cli auth status`，按退出码判断登录态，
 并把已有的 cookie 注入 context.session，使工作流中的直接 HTTP 调用也能携带认证。
 
+同时把 `context.base_url` 对齐到登录态里的 server：cookie 是绑定 server 的，
+调用方传的 base_url 与登录地址不一致时（例如登录 `http://10.243.80.228`、
+工作流传 `https://omtool.rnd.huawei.com`），cookie 带不过去，后端返回
+`noLogin`，而 `auth status` 只看本地会话仍显示"已认证"，极易误判为会话过期。
+
 **本 skill 严禁执行 `omres-cli auth login`，严禁索要 / 读取 / 传递密码。**
 校验不通过时直接返回失败，由主代理提示用户重新登录后重跑。
 """
@@ -22,7 +27,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import TYPE_CHECKING
 from context import WorkflowContext, StepExecutionError
-from omres_cli import find_omres_cli as _find_omres_cli
+from omres_cli import (
+    find_omres_cli as _find_omres_cli,
+    read_session as _read_session,
+    session_server as _session_server,
+    server_args as _server_args,
+    align_context_server as _align_context_server,
+)
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -37,25 +48,6 @@ _RELOGIN_HINT = (
     "本 skill 不会也不允许代为登录。请主代理提示用户执行 "
     "`omres-cli auth login --username <域账号>`，用户确认完成后从本阶段重跑。"
 )
-
-
-def _read_session() -> dict:
-    """
-    读取 ~/.omres-cli/session.json 的内容
-
-    Returns:
-        dict: 会话内容，读取失败返回空dict
-    """
-    home = os.path.expanduser("~")
-    session_file = os.path.join(home, ".omres-cli", "session.json")
-    if not os.path.isfile(session_file):
-        return {}
-    try:
-        with open(session_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
 
 
 def _read_session_cookie() -> str:
@@ -128,9 +120,9 @@ def _run_auth_status(context: WorkflowContext = None, online: bool = False) -> d
     cmd = [cli_path, "auth", "status"]
     if online:
         cmd.append("--online")
-    base_url = getattr(context, "base_url", None) if context is not None else None
-    if base_url:
-        cmd.extend(["--server", base_url])
+    # 不要用 base_url 覆盖登录态里的 server：cookie 只对登录时那台 server 有效，
+    # 覆盖后 --online 探活会打到没有 cookie 的地址上，误报成会话失效
+    cmd.extend(_server_args(context))
 
     try:
         proc = subprocess.run(
@@ -207,7 +199,14 @@ def ensure_authenticated(context: WorkflowContext, online: bool = False) -> dict
             context_state=context.state
         )
 
-    # 已认证：复用现成的登录态
+    # 已认证：把 base_url 对齐到登录态里的 server
+    # cookie 绑定在登录时那台 server 上，地址不一致时后端会返回 noLogin，
+    # 而 auth status 只看本地会话仍报「已认证」，很容易误判成会话过期
+    server = _align_context_server(context)
+    if server:
+        context.set_state("server", server)
+
+    # 复用现成的登录态
     cookie = _read_session_cookie()
     if cookie:
         _inject_cookie_to_context(context, cookie)
@@ -244,4 +243,5 @@ if __name__ == "__main__":
     result = ensure_authenticated(ctx)
     print(f"登录态校验结果: {result}")
     print(f"当前用户: {get_authenticated_username(ctx)}")
+    print(f"登录态 server: {_session_server() or 'N/A'} / 生效 base_url: {ctx.base_url}")
     print(f"Cookie: {ctx.session.headers.get('Cookie', 'N/A')}")

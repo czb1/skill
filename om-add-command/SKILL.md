@@ -274,6 +274,13 @@ workflow.py通过`fetch_service_map()`在创建工程后调用 `omres-cli overal
 - 如需确认会话在后端真实有效（而不只是本地存在），可用 `omres-cli auth status --online` 额外探活；`ensure_authenticated(context, online=True)` 对应该行为。
 - 会话中途失效时，工作流会在第一步就以「未认证」失败返回，由主代理提示用户重新登录后**从本阶段重跑**，skill 不得自行重登。
 
+### base_url 与登录 server 的关系
+
+- session.json 里的 cookie 是**绑定到登录时那台 server** 的。只要本地存在登录态，工作流一律以登录态里的 server 为准：不再给 omres-cli 传 `--server`，同时把 `context.base_url` 自动对齐过去。`base_url` 参数只在本地**没有**登录态时才生效。
+- 两者不一致时（例如登录的是 `http://10.243.80.228`，而调用传了 `https://omtool.rnd.huawei.com`）会打印一条告警，说明已改用登录态的 server。确需访问另一个地址，请先对该地址执行 `omres-cli auth login`。
+- 这是一个容易误诊的故障：地址被覆盖后 cookie 带不过去，后端返回 `noLogin`，但 `omres-cli auth status` 只看本地会话，仍然显示「已认证」，看起来像会话过期。判断依据是**不带 `--server` 直接跑 omres-cli 能成功**。
+- 极少数需要保留旧行为（强行用 `base_url` 覆盖 server）的场景，设置环境变量 `OMRES_ALLOW_SERVER_OVERRIDE=1`。
+
 ## 执行方式
 
 在PowerShell中执行（Windows环境）：

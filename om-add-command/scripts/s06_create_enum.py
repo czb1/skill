@@ -75,9 +75,8 @@ def create_enum_type(
         "projectId": project_id
     }
 
+    # server 由 _run_cli 统一决定（以 omres-cli 登录态里的 server 为准）
     cmd = [cli_path, "datatype", "add", "--body", json.dumps(payload, ensure_ascii=False)]
-    if context.base_url:
-        cmd.extend(["--server", context.base_url])
 
     result = _run_cli(context, cmd, "create_enum_type")
 
@@ -99,8 +98,6 @@ def create_enum_type(
         # API创建成功后，通过queryAll查询获取cdtId
         query_payload = {"projectId": project_id, "type": "enum", "moduleId": moduleId}
         query_cmd = [cli_path, "datatype", "query-all", "--body", json.dumps(query_payload, ensure_ascii=False)]
-        if context.base_url:
-            query_cmd.extend(["--server", context.base_url])
 
         query_result = _run_cli(context, query_cmd, "create_enum_type")
         if isinstance(query_result, dict):
@@ -212,8 +209,6 @@ def add_enum_item(
     }
 
     cmd = [cli_path, "datatype", "enum-add", "--body", json.dumps(payload, ensure_ascii=False)]
-    if context.base_url:
-        cmd.extend(["--server", context.base_url])
 
     return _run_cli(context, cmd, "add_enum_item")
 

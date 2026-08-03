@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import TYPE_CHECKING
 from context import WorkflowContext, StepExecutionError
-from omres_cli import find_omres_cli as _find_omres_cli
+from omres_cli import find_omres_cli as _find_omres_cli, server_args as _server_args
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -66,8 +66,7 @@ def create_project(context: WorkflowContext, taskName: str = None, neType: str =
         "--body", body,
     ]
 
-    if context.base_url:
-        cmd.extend(["--server", context.base_url])
+    cmd.extend(_server_args(context))
 
     try:
         proc = subprocess.run(

@@ -165,7 +165,10 @@ def execute_workflow(
         fields: 字段配置列表 [{"name": "AUTOSWITCH", "type": "ENUM", "isKey": 1, ...}, ...]
         commands: 命令配置列表 [{"name": "SET HLBAAA", "type": "update"}, ...]
         file_path: 上传文件路径
-        base_url: API基础URL
+        base_url: API基础URL；**仅在本地没有 omres-cli 登录态时才生效**。
+            只要 ~/.omres-cli/session.json 存在，一律以登录时的 server 为准
+            （cookie 绑定 server，用别的地址会被后端判为 noLogin）；
+            地址不一致时会打印告警并自动对齐
         error_codes: 错误码配置列表，每个配置包含:
             - code: 错误码名称（如ZL_58321）
             - code_num: 错误码数字（如58321）
@@ -245,6 +248,8 @@ def execute_workflow(
         if not getattr(context, "w3Num", None):
             context.w3Num = resolved_user
         logger.info(f"  ✓ omres-cli 登录态有效: {resolved_user}")
+        # base_url 已被对齐到登录态里的 server（cookie 绑定 server，不一致会 noLogin）
+        logger.info(f"  ✓ 生效 server: {context.base_url}")
 
         create_project(context)
         task_id = context.get_state("taskId")

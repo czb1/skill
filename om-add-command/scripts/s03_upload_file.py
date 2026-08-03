@@ -14,7 +14,7 @@ import json
 import shutil
 from typing import TYPE_CHECKING, List
 from context import WorkflowContext, StepExecutionError
-from omres_cli import find_omres_cli as _find_omres_cli
+from omres_cli import find_omres_cli as _find_omres_cli, server_args as _server_args
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -87,8 +87,7 @@ def _run_omres_cli(cmd: list, context: WorkflowContext, step_name: str, timeout:
 
     full_cmd = [cli_path] + cmd
 
-    if context.base_url:
-        full_cmd.extend(["--server", context.base_url])
+    full_cmd.extend(_server_args(context))
 
     try:
         proc = subprocess.run(
