@@ -142,6 +142,8 @@ ComConfig开发需要用到upcf-add-command skill、pcf-lua-generate
 
 > ComConfig 建模相关 skill 依赖 `omres-cli` 的登录态。该登录已在阶段零 Step 1 完成，会话文件对所有子代理进程可见（同一用户主目录），子代理**直接调用 `omres-cli` 即可，无需也不得再次登录**。若子代理检测到未认证，应直接返回失败并说明原因，交由主代理向用户求助。
 
+> 建模仓里已经存在同名对象（如 `modules/PCFDLB/XXX.xml`）是**正常情况**：上传解析会把它导入工程，`upcf-add-command` 会自动复用该对象做增量建模。子代理**不得**为此改名、换工程或另写「跳过 create_moc」的自定义脚本，按 skill 的标准入口 `execute_workflow` 执行即可。
+
 代码仓路径：
 task委派时，prompt字段中需要指定code_path，代码仓位于当前工作目录的 `.workspace/` 下，即 `.workspace/UPCFDLB`、`.workspace/ComConfig`。
 

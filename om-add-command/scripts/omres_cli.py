@@ -86,6 +86,33 @@ def deadline_hint(*texts: str) -> str:
     return ""
 
 
+# 后端「同名对象已存在」的报错特征串（各版本文案不完全一致，宽松匹配）
+_DUPLICATE_MARKERS = (
+    "已存在", "已经存在", "重复", "重名",
+    "duplicate", "already exist", "already exists", "exist already", "has exist",
+)
+
+
+def is_duplicate_error(message: str) -> bool:
+    """
+    判断一条后端报错是不是「同名对象已存在」
+
+    上传的建模文件里如果已经有同名 MOC/字段/枚举，解析阶段就会把它导入工程，
+    再去 add 就会撞重复。这类冲突应该走「复用已有对象」的分支，而不是让整个
+    工作流失败——需求要求的就是这个名字，改名或换工程都不对。
+
+    Args:
+        message: 后端返回的错误信息
+
+    Returns:
+        bool: 命中重复语义时返回 True
+    """
+    if not message:
+        return False
+    blob = str(message).lower()
+    return any(marker in blob for marker in _DUPLICATE_MARKERS)
+
+
 # server 不一致的告警只打一次，避免刷屏
 _server_mismatch_warned = False
 

@@ -13,7 +13,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import TYPE_CHECKING, Dict, Any, List
 from context import WorkflowContext, StepExecutionError
-from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli, DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT
+from omres_cli import (
+    find_omres_cli as _find_omres_cli,
+    run_cli as _run_cli,
+    DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT,
+    is_duplicate_error as _is_duplicate_error,
+)
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -24,10 +29,15 @@ def add_field(
     fieldName: str,
     isKey: int = 0,
     isMandatory: int = 0,
-    mocId: int = None
+    mocId: int = None,
+    reuse_if_exists: bool = True
 ) -> dict:
     """
-    添加字段到原子对象 — 通过omres-cli moc-field add-name
+    添加字段到原子对象 — 通过omres-cli moc-field add-name；同名字段已存在时复用
+
+    复用已有原子对象（建模文件里已有同名对象）时，部分字段可能已经存在，
+    此时不应该整个流程失败：字段本身复用，后面的 update_field_info 会把
+    类型/范围/默认值按本次配置刷新一遍。
 
     Args:
         context: 工作流上下文
@@ -35,9 +45,10 @@ def add_field(
         isKey: 是否主键 (0=否, 1=是)
         isMandatory: 是否必填 (0=否, 1=是)
         mocId: 原子对象ID
+        reuse_if_exists: 同名字段已存在时复用而不是报错（默认True）
 
     Returns:
-        dict: 添加结果
+        dict: 添加结果；复用已有字段时额外带 reused=True
     """
     mocId = mocId or context.get_required_state("mocId")
     task_id = context.get_required_state("taskId")
@@ -62,16 +73,51 @@ def add_field(
 
     print(f"  [DEBUG] add_field: fieldName={fieldName}, mocId={mocId}, taskId={task_id}")
 
-    result = _run_cli(
-        context,
-        ["moc-field", "add-name", "--body", body],
-        step_name="add_field",
-        timeout=_DEFAULT_TIMEOUT
-    )
+    try:
+        result = _run_cli(
+            context,
+            ["moc-field", "add-name", "--body", body],
+            step_name="add_field",
+            timeout=_DEFAULT_TIMEOUT
+        )
+    except StepExecutionError as e:
+        if not (reuse_if_exists and _is_duplicate_error(e.message)):
+            raise
+        # 确认确实是已存在的字段（而不是文案凑巧命中），再放行
+        if not field_exists(context, fieldName, mocId):
+            raise
+        print(f"  [INFO] 字段 {fieldName} 已存在于 mocId={mocId}，复用并按本次配置更新类型")
+        context.set_state(f"field_added_{fieldName}", True)
+        context.set_state(f"field_reused_{fieldName}", True)
+        return {"status": True, "reused": True, "message": f"字段{fieldName}已存在，复用"}
 
     context.set_state(f"field_added_{fieldName}", True)
 
     return result
+
+
+def field_exists(context: WorkflowContext, fieldName: str, mocId: int = None) -> bool:
+    """
+    判断原子对象上是否已有同名字段（实时查询，不依赖缓存的field_map）
+
+    Args:
+        context: 工作流上下文
+        fieldName: 字段名称
+        mocId: 原子对象ID
+
+    Returns:
+        bool: 已存在返回True
+    """
+    try:
+        result = query_field_list(context, mocId=mocId)
+    except StepExecutionError as e:
+        print(f"  [WARNING] 查询字段列表失败，无法判断 {fieldName} 是否已存在: {e.message}")
+        return False
+
+    for field in result.get("data", []) or []:
+        if field.get("fieldName") == fieldName:
+            return True
+    return False
 
 
 def query_field_list(context: WorkflowContext, mocId: int = None, moduleId: int = None) -> dict:

@@ -23,6 +23,7 @@ description: OM工具自动化技能，自动化创建任意MML命令（SET/LST/
 4. **多枚举类型支持**：为每个枚举字段自动创建独立的枚举类型，枚举项从range字符串自动解析（如"SUBID（0）APN （1）"）
 5. **自动导出与MR创建**：校验通过后自动导出模型、解压压缩包、同步文件到仓库、提交Git并通过 `codehub-cli` 创建MR（复用统一登录，无需token）
 6. **错误码与Lua脚本**：支持添加错误码和生成业务处理Lua脚本
+7. **幂等复用**：原子对象/字段/枚举类型在工程里已存在时自动复用并增量修改，不会因「已存在」冲突中断（见下节）
 
 ## 前置条件：omres-cli 登录态
 
@@ -116,6 +117,46 @@ result = execute_workflow(
     base_url="https://omtool.rnd.huawei.com"
 )
 ```
+
+## 原子对象已存在（「重复」冲突）时的行为
+
+**这是正常情况，不是错误，工作流会自动处理，不需要任何人工介入或自定义脚本。**
+
+上传的建模文件里如果已经有同名对象（例如仓库里已存在
+`PcfDiamLoadBalanceService/om/cfg/microservice/input/modules/PCFDLB/DLBSCTPBUFFALM.xml`），
+阶段2的解析就会把它导入到新建工程里。此时阶段3再去创建同名对象，后端会判为重复。
+需求要求的就是这个名字，**改名、换工程、跳过步骤都是错的**——正确做法是复用这个已存在的对象，
+在它上面做增量建模。工作流已经这么做了：
+
+| 冲突对象 | 行为 |
+|----------|------|
+| 原子对象(MOC) | 创建前先 `moc select-name` 查询；已存在则复用其 `mocId`，`moc_reused=True`；即使后端仍报「已存在」，也会回查一次并复用 |
+| 字段(field) | 复用对象时先查已有字段，已存在的跳过创建；阶段6的 `update_field_info` 仍会按本次配置刷新类型/范围/默认值 |
+| 枚举类型/枚举项 | 已存在则复用 `cdtId`，已存在的枚举项跳过添加 |
+| 方法(method) | 本来就是复用解析出来的方法（`update`/`create`/`delete`/`get-config`），按 commands 配置删除多余方法 |
+
+复用生效时日志会打印，例如：
+
+```
+  [INFO] 原子对象 DLBSCTPBUFFALM 已存在于工程中（建模文件解析导入），直接复用 mocId=328 继续增量建模，不重复创建
+  ✓ 原子对象 DLBSCTPBUFFALM 已存在于建模文件中，复用该对象继续增量建模
+```
+
+返回结果和执行报告里的 `moc_reused` 字段标明了这次是新建还是复用。
+
+### 遇到重复冲突时不要做什么
+
+- **不要**改 `moc_name`（加后缀、加时间戳）绕开冲突——需求文档里的名字是硬要求
+- **不要**新建一个工程重试，同一份建模文件解析后还是会带出同名对象
+- **不要**绕过 `execute_workflow` 另写「跳过 create_moc 的自定义执行脚本」——幂等逻辑已经内置，
+  自定义脚本会丢掉后续阶段（枚举/字段/命令/校验/导出/MR）的编排
+- 只有确实需要「必须是全新对象、撞名就失败」的严格语义时，才传
+  `create_moc(context, reuse_if_exists=False)`（`execute_workflow` 不暴露该开关）
+
+### 仍然会失败的情况
+
+只有报错语义确实是「已存在」、**并且**回查确认对象/字段真的在工程里，才会走复用分支。
+其它错误（moduleId 不对、未登录、后端异常等）照常失败返回，不会被吞掉。
 
 ## file_path参数说明
 - 如果file_path是ComConfig目录，需要把file_path修改到ComConfig/om，上面实例中的"D:/git/26.0/ComConfig/om"只是例子，实际路径需要你自己动态调整，请根据代码仓真实路径调整
@@ -386,6 +427,7 @@ print(result)
     'taskId': 46890,
     'mocId': 328,
     'cdtId': 593,
+    'moc_reused': False,   # True表示复用了建模文件里已有的同名对象
     'validation_passed': True,
     'errors': [],
     'report': {
@@ -393,6 +435,7 @@ print(result)
         'end_time': '2026-06-18 12:05:00',
         'duration_seconds': 300,
         'moc_name': 'DLBSCTPCFG',
+        'moc_reused': False,
         'service_name': 'PcfPolicyEngineService',
         'commands': [
             {
@@ -446,6 +489,7 @@ print(result)
 | end_time | 任务结束时间 (YYYY-MM-DD HH:MM:SS) |
 | duration_seconds | 执行耗时（秒） |
 | moc_name | 原子对象名称 |
+| moc_reused | 是否复用了工程里已存在的同名对象（建模文件里已有时为True） |
 | service_name | 服务名称 |
 | commands | 创建的命令列表 |
 | fields | 创建的字段列表 |
@@ -485,8 +529,11 @@ print(result)
 | 脚本 | 功能 |
 |------|------|
 | workflow.py | 主工作流入口 |
-| omres_cli.py | omres-cli 定位与调用的统一封装（`find_omres_cli` / `run_cli`） |
+| omres_cli.py | omres-cli 定位与调用的统一封装（`find_omres_cli` / `run_cli` / `is_duplicate_error`） |
 | s01_login.py | 登录态校验（`ensure_authenticated`，只校验不登录） |
+| s05_create_moc.py | 原子对象创建；已存在时复用（`find_moc_by_name` / `create_moc(reuse_if_exists=True)`） |
+| s06_create_enum.py | 枚举类型与枚举项；已存在时复用 `cdtId`（`find_enum_type`） |
+| s08_manage_fields.py | 字段增改与默认值；同名字段已存在时复用（`field_exists`） |
 | s15_mml_commands.py | MML命令管理 |
 | s12_manage_methods.py | 方法管理 |
 | s17_validation.py | 校验与导出 |

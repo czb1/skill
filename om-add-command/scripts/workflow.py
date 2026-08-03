@@ -295,8 +295,14 @@ def execute_workflow(
         logger.info("[阶段3] 创建原子对象")
         logger.info("-" * 40)
 
+        # 建模文件里已有同名对象时（解析阶段已导入工程），create_moc 会自动复用它，
+        # 不会因为「重复」失败——需求要求的就是这个名字，后续步骤在该对象上增量修改
         create_moc(context)
-        logger.info(f"  ✓ 原子对象 {moc_name} 创建成功")
+        moc_reused = context.get_state("moc_reused", False)
+        if moc_reused:
+            logger.info(f"  ✓ 原子对象 {moc_name} 已存在于建模文件中，复用该对象继续增量建模")
+        else:
+            logger.info(f"  ✓ 原子对象 {moc_name} 创建成功")
 
         query_moc_list(context)
         moc_id = context.get_state("mocId")
@@ -331,8 +337,20 @@ def execute_workflow(
         logger.info("[阶段5] 添加字段")
         logger.info("-" * 40)
 
+        # 复用已有对象时字段可能已经在了：先查一遍已有字段，只补缺失的，
+        # 已存在的字段在阶段6由 update_field_info 按本次配置刷新类型/范围/默认值
+        existing_field_names = set()
+        if moc_reused:
+            query_field_list(context)
+            existing_field_names = set(context.get_state("field_map", {}).keys())
+            if existing_field_names:
+                logger.info(f"  ! 对象上已有字段（将按本次配置更新，不重复添加）: {sorted(existing_field_names)}")
+
         for field_cfg in fields:
             field_name = field_cfg["name"]
+            if field_name in existing_field_names:
+                logger.info(f"  ✓ 字段 {field_name} 已存在，复用")
+                continue
             add_field(context, fieldName=field_name, isKey=field_cfg.get("isKey", 0))
             logger.info(f"  ✓ 字段 {field_name} 添加成功")
 
@@ -825,6 +843,7 @@ def execute_workflow(
             "end_time": end_time.strftime("%Y-%m-%d %H:%M:%S"),
             "duration_seconds": int(duration),
             "moc_name": moc_name,
+            "moc_reused": moc_reused,
             "service_name": serviceName,
             "commands": report_commands,
             "fields": report_fields,
@@ -842,7 +861,7 @@ def execute_workflow(
         print(f"开始时间: {report['start_time']}")
         print(f"结束时间: {report['end_time']}")
         print(f"执行耗时: {report['duration_seconds']} 秒")
-        print(f"原子对象: {report['moc_name']}")
+        print(f"原子对象: {report['moc_name']}{'（复用建模文件中已有对象）' if moc_reused else ''}")
         print(f"服务名称: {report['service_name']}")
         print()
         print("创建的命令:")
@@ -870,6 +889,7 @@ def execute_workflow(
             "status": "success",
             "taskId": context.get_state("taskId"),
             "mocId": context.get_state("mocId"),
+            "moc_reused": moc_reused,
             "cdtId": context.get_state("cdtId"),
             "validation_passed": is_passed,
             "mr_result": mr_result,
