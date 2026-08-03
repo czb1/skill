@@ -1,0 +1,421 @@
+"""
+[Skill-08/09/10] 字段管理：添加字段、查询字段、设置字段类型
+通过 omres-cli moc-field add-name / select-name / update-info 和 default-record add 命令实现，替代直接HTTP调用。
+"""
+
+import sys
+import os
+import subprocess
+import json
+import shutil
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from typing import TYPE_CHECKING, Dict, Any, List
+from context import WorkflowContext, StepExecutionError
+
+if TYPE_CHECKING:
+    from typing import Optional
+
+
+def _find_omres_cli() -> str:
+    """查找omres-cli可执行文件路径"""
+    cli_path = shutil.which("omres-cli") or shutil.which("omres-cli.exe")
+    if cli_path:
+        return cli_path
+
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    candidates = [
+        os.path.join(project_root, "omres-cli", "omres-cli", "omres-cli.exe"),
+        os.path.join(project_root, "omres-cli", "omres-cli"),
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+
+    cwd = os.getcwd()
+    for _ in range(3):
+        candidate = os.path.join(cwd, "omres-cli", "omres-cli", "omres-cli.exe")
+        if os.path.isfile(candidate):
+            return candidate
+        parent = os.path.dirname(cwd)
+        if parent == cwd:
+            break
+        cwd = parent
+
+    return "omres-cli"
+
+
+def _run_cli(context: WorkflowContext, args: list, step_name: str, timeout: int = 60) -> dict:
+    """
+    执行omres-cli命令并解析JSON-RPC 2.0输出
+
+    Args:
+        context: 工作流上下文
+        args: 命令参数列表（不含omres-cli本身）
+        step_name: 步骤名称（用于错误信息）
+        timeout: 超时秒数
+
+    Returns:
+        dict: JSON-RPC result字段
+
+    Raises:
+        StepExecutionError: 执行失败时抛出
+    """
+    cli_path = _find_omres_cli()
+    cmd = [cli_path] + args
+
+    if context.base_url:
+        cmd.extend(["--server", context.base_url])
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True, text=True, encoding='utf-8', timeout=timeout
+        )
+    except FileNotFoundError:
+        raise StepExecutionError(
+            step_name=step_name,
+            message=f"omres-cli未找到: {cli_path}，请确认omres-cli已安装或在项目目录下",
+            context_state=context.state
+        )
+    except subprocess.TimeoutExpired:
+        raise StepExecutionError(
+            step_name=step_name,
+            message=f"omres-cli命令执行超时",
+            context_state=context.state
+        )
+
+    output = proc.stdout.strip() if proc.stdout else ""
+
+    if not output:
+        stderr_msg = proc.stderr.strip() if proc.stderr else ""
+        raise StepExecutionError(
+            step_name=step_name,
+            message=f"命令返回为空, stderr: {stderr_msg[:200]}",
+            context_state=context.state
+        )
+
+    try:
+        rpc_output = json.loads(output)
+    except json.JSONDecodeError as e:
+        raise StepExecutionError(
+            step_name=step_name,
+            message=f"响应JSON解析失败: {e}, 原始响应: {output[:200]}",
+            context_state=context.state
+        )
+
+    # 检查JSON-RPC错误
+    if "error" in rpc_output:
+        error = rpc_output["error"]
+        error_msg = error.get("message", "未知错误")
+        if "data" in error:
+            data = error["data"]
+            if isinstance(data, dict):
+                error_msg = data.get("msg", data.get("message", error_msg))
+            elif isinstance(data, str):
+                error_msg = data
+        raise StepExecutionError(
+            step_name=step_name,
+            message=f"命令执行失败: {error_msg}",
+            context_state=context.state
+        )
+
+    # 提取result
+    result = rpc_output.get("result", {})
+
+    # 检查业务状态码
+    if isinstance(result, dict):
+        code = result.get("code")
+        if code is not None and code != 0:
+            raise StepExecutionError(
+                step_name=step_name,
+                message=f"业务执行失败: {result.get('msg', result.get('message', '未知错误'))}",
+                context_state=context.state
+            )
+
+        # 兼容旧格式：直接包含status字段
+        if "status" in result and not result.get("status"):
+            raise StepExecutionError(
+                step_name=step_name,
+                message=f"业务执行失败: {result.get('message', '未知错误')}",
+                context_state=context.state
+            )
+
+    return result
+
+
+def add_field(
+    context: WorkflowContext,
+    fieldName: str,
+    isKey: int = 0,
+    isMandatory: int = 0,
+    mocId: int = None
+) -> dict:
+    """
+    添加字段到原子对象 — 通过omres-cli moc-field add-name
+
+    Args:
+        context: 工作流上下文
+        fieldName: 字段名称
+        isKey: 是否主键 (0=否, 1=是)
+        isMandatory: 是否必填 (0=否, 1=是)
+        mocId: 原子对象ID
+
+    Returns:
+        dict: 添加结果
+    """
+    mocId = mocId or context.get_required_state("mocId")
+    task_id = context.get_required_state("taskId")
+
+    if not fieldName:
+        raise StepExecutionError(
+            step_name="add_field",
+            message="字段名称不能为空",
+            context_state=context.state
+        )
+
+    body = json.dumps({
+        "fieldName": fieldName,
+        "isKey": str(isKey),
+        "isCustomKey": "0",
+        "isUnique": "0",
+        "isMandatory": str(isMandatory),
+        "m2v": "1",
+        "taskId": str(task_id),
+        "mocId": mocId
+    }, ensure_ascii=False)
+
+    print(f"  [DEBUG] add_field: fieldName={fieldName}, mocId={mocId}, taskId={task_id}")
+
+    result = _run_cli(
+        context,
+        ["moc-field", "add-name", "--body", body],
+        step_name="add_field",
+        timeout=60
+    )
+
+    context.set_state(f"field_added_{fieldName}", True)
+
+    return result
+
+
+def query_field_list(context: WorkflowContext, mocId: int = None, moduleId: int = None) -> dict:
+    """
+    查询字段列表 — 通过omres-cli moc-field select-name
+
+    Args:
+        context: 工作流上下文
+        mocId: 原子对象ID
+        moduleId: 模块ID
+
+    Returns:
+        dict: 包含字段列表的响应
+    """
+    mocId = mocId or context.get_required_state("mocId")
+    moduleId = moduleId or context.moduleId
+    task_id = context.get_required_state("taskId")
+
+    body = json.dumps({
+        "taskId": str(task_id),
+        "mocId": mocId,
+        "moduleId": moduleId
+    }, ensure_ascii=False)
+
+    print(f"  [DEBUG] query_field_list: taskId={task_id}, mocId={mocId}, moduleId={moduleId}")
+
+    result = _run_cli(
+        context,
+        ["moc-field", "select-name", "--body", body],
+        step_name="query_field_list",
+        timeout=60
+    )
+
+    # 提取fieldId映射
+    field_map = {}
+    if isinstance(result, dict) and result.get("data"):
+        for field in result.get("data", []):
+            fname = field.get("fieldName")
+            fid = field.get("fieldId")
+            if fname and fid:
+                field_map[fname] = fid
+
+    context.set_state("field_map", field_map)
+    context.set_state("field_list", result.get("data", []))
+
+    return result
+
+
+def update_field_info(
+    context: WorkflowContext,
+    fieldName: str,
+    dataTypeId: int,
+    dataTypeName: str,
+    rangeStr: str = None,
+    fieldDescCh: str = None,
+    fieldDescEn: str = None,
+    isKey: int = 0,
+    isMandatory: int = 0,
+    defaultValue: str = "",
+    invalidValue: str = "",
+    customizeDataTypeId: int = None,
+    mocId: int = None,
+    fieldId: int = None
+) -> dict:
+    """
+    更新字段信息(设置数据类型) — 通过omres-cli moc-field update-info
+
+    Args:
+        context: 工作流上下文
+        fieldName: 字段名称
+        dataTypeId: 数据类型ID (8=uint32, 25=ENUM等)
+        dataTypeName: 数据类型名称
+        rangeStr: 取值范围
+        fieldDescCh: 中文描述
+        fieldDescEn: 英文描述
+        isKey: 是否主键
+        isMandatory: 是否必填
+        defaultValue: 默认值
+        invalidValue: 无效值
+        customizeDataTypeId: 自定义类型ID (枚举类型用)
+        mocId: 原子对象ID
+        fieldId: 字段ID
+
+    Returns:
+        dict: 更新结果
+    """
+    mocId = mocId or context.get_required_state("mocId")
+    moduleId = context.moduleId
+    task_id = context.get_required_state("taskId")
+
+    # 如果没有提供fieldId，从field_map中查找
+    if not fieldId:
+        field_map = context.get_state("field_map", {})
+        fieldId = field_map.get(fieldName)
+
+    if not fieldId:
+        raise StepExecutionError(
+            step_name="update_field_info",
+            message=f"未找到字段ID: {fieldName}",
+            context_state=context.state
+        )
+
+    body = json.dumps({
+        "taskId": task_id,
+        "mocId": mocId,
+        "fieldId": fieldId,
+        "fieldName": fieldName,
+        "fieldDescCh": fieldDescCh or fieldName,
+        "fieldDescEN": fieldDescEn or fieldName,
+        "isKey": isKey,
+        "isCustomKey": 0,
+        "isUnique": 0,
+        "isMandatory": isMandatory,
+        "isIndexField": "否",
+        "dataTypeId": dataTypeId,
+        "dataTypeName": dataTypeName,
+        "range": rangeStr or "",
+        "defaultValue": defaultValue,
+        "invalidValue": invalidValue,
+        "m2v": 1,
+        "customizeDataTypeId": customizeDataTypeId or -1,
+        "isSupportFuzzyQuery": 0
+    }, ensure_ascii=False)
+
+    print(f"  [DEBUG] update_field_info: fieldName={fieldName}, fieldId={fieldId}, dataTypeId={dataTypeId}")
+
+    result = _run_cli(
+        context,
+        ["moc-field", "update-info", "--body", body],
+        step_name="update_field_info",
+        timeout=60
+    )
+
+    context.set_state(f"field_type_set_{fieldName}", True)
+
+    return result
+
+
+def add_default_record(context: WorkflowContext, defaultRecords: Dict[str, str], mocId: int = None) -> dict:
+    """
+    添加默认值记录（单行） — 通过omres-cli default-record add
+
+    Args:
+        context: 工作流上下文
+        defaultRecords: 默认值字典 {"fieldId": "defaultValue", ...}
+        mocId: 原子对象ID
+
+    Returns:
+        dict: 添加结果
+    """
+    mocId = mocId or context.get_required_state("mocId")
+    task_id = context.get_required_state("taskId")
+
+    body = json.dumps({
+        "taskId": task_id,
+        "mocId": mocId,
+        "defaultRecords": defaultRecords
+    }, ensure_ascii=False)
+
+    print(f"  [DEBUG] add_default_record: mocId={mocId}, taskId={task_id}")
+
+    result = _run_cli(
+        context,
+        ["default-record", "add", "--body", body],
+        step_name="add_default_record",
+        timeout=60
+    )
+
+    context.set_state("default_record_added", True)
+
+    return result
+
+
+def add_default_records(context: WorkflowContext, defaultRecordsList: List[Dict[str, str]], mocId: int = None) -> dict:
+    """
+    添加多行默认值记录 — 通过omres-cli default-record add
+
+    Args:
+        context: 工作流上下文
+        defaultRecordsList: 默认值字典列表，每行记录一个字典
+        mocId: 原子对象ID
+
+    Returns:
+        dict: 最后一行的添加结果
+    """
+    mocId = mocId or context.get_required_state("mocId")
+    task_id = context.get_required_state("taskId")
+
+    last_result = None
+    for idx, default_record in enumerate(defaultRecordsList):
+        body = json.dumps({
+            "taskId": task_id,
+            "mocId": mocId,
+            "defaultRecords": default_record
+        }, ensure_ascii=False)
+
+        print(f"  [DEBUG] add_default_records第{idx+1}行: mocId={mocId}, taskId={task_id}")
+
+        try:
+            last_result = _run_cli(
+                context,
+                ["default-record", "add", "--body", body],
+                step_name="add_default_records",
+                timeout=60
+            )
+        except StepExecutionError as e:
+            print(f"  [WARNING] 添加第{idx+1}行默认值记录失败: {e.message}")
+            last_result = {"status": False, "message": e.message}
+            continue
+
+        print(f"  ✓ 第{idx+1}行默认值记录添加成功")
+
+    context.set_state("default_record_added", True)
+
+    return last_result
+
+
+if __name__ == "__main__":
+    from context import create_context
+    ctx = create_context(taskName="TEST", userName="test", passwd="test", moduleId=5)
+    print("字段管理模块测试需要完整流程")
