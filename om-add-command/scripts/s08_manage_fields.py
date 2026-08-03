@@ -18,10 +18,17 @@ from omres_cli import (
     run_cli as _run_cli,
     DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT,
     is_duplicate_error as _is_duplicate_error,
+    iter_data_records as _iter_data_records,
+    pick_value as _pick_value,
 )
 
 if TYPE_CHECKING:
     from typing import Optional
+
+
+# 后端不同接口对「字段」的叫法不统一（字段/属性/attr），键名都兜住
+_FIELD_NAME_KEYS = ("fieldName", "attrName", "attributeName", "fieldEnName", "name")
+_FIELD_ID_KEYS = ("fieldId", "attrId", "attributeId", "id")
 
 
 def add_field(
@@ -83,13 +90,28 @@ def add_field(
     except StepExecutionError as e:
         if not (reuse_if_exists and _is_duplicate_error(e.message)):
             raise
-        # 确认确实是已存在的字段（而不是文案凑巧命中），再放行
-        if not field_exists(context, fieldName, mocId):
-            raise
-        print(f"  [INFO] 字段 {fieldName} 已存在于 mocId={mocId}，复用并按本次配置更新类型")
-        context.set_state(f"field_added_{fieldName}", True)
-        context.set_state(f"field_reused_{fieldName}", True)
-        return {"status": True, "reused": True, "message": f"字段{fieldName}已存在，复用"}
+
+        # 后端说已存在（如「属性名称已存在」），必须能查到它的 fieldId 才能继续，
+        # 因为后面设置类型、加命令参数、加默认值都要用这个 id
+        if field_exists(context, fieldName, mocId):
+            print(f"  [INFO] 字段 {fieldName} 已存在于 mocId={mocId}，复用并按本次配置更新类型")
+            context.set_state(f"field_added_{fieldName}", True)
+            context.set_state(f"field_reused_{fieldName}", True)
+            return {"status": True, "reused": True, "message": f"字段{fieldName}已存在，复用"}
+
+        # 查不到就别硬撑：继续走下去只会在 update_field_info 抛「未找到字段ID」，
+        # 反而看不出真正的原因。这里把两边的事实一起报出来
+        known = sorted(context.get_state("field_map", {}).keys())
+        raise StepExecutionError(
+            step_name="add_field",
+            message=(
+                f"添加字段 {fieldName} 时后端报「{e.message}」，但在 mocId={mocId} 上查不到该字段"
+                f"（moc-field select-name 查到 {len(known)} 个字段: {known}）。"
+                f"可能是该名称在模块级别已被占用，或字段挂在别的原子对象上；"
+                f"请确认 mocId/moduleId 是否指向需求要求的那个对象"
+            ),
+            context_state=context.state
+        )
 
     context.set_state(f"field_added_{fieldName}", True)
 
@@ -109,20 +131,32 @@ def field_exists(context: WorkflowContext, fieldName: str, mocId: int = None) ->
         bool: 已存在返回True
     """
     try:
-        result = query_field_list(context, mocId=mocId)
+        query_field_list(context, mocId=mocId)
     except StepExecutionError as e:
         print(f"  [WARNING] 查询字段列表失败，无法判断 {fieldName} 是否已存在: {e.message}")
         return False
 
-    for field in result.get("data", []) or []:
-        if field.get("fieldName") == fieldName:
-            return True
-    return False
+    return fieldName in context.get_state("field_map", {})
+
+
+def _extract_field_map(result) -> dict:
+    """从查询结果里提取 {字段名: fieldId}，兼容不同的包装形状与键名别名"""
+    field_map = {}
+    for field in _iter_data_records(result):
+        fname = _pick_value(field, _FIELD_NAME_KEYS)
+        fid = _pick_value(field, _FIELD_ID_KEYS)
+        if fname and fid is not None:
+            field_map[fname] = fid
+    return field_map
 
 
 def query_field_list(context: WorkflowContext, mocId: int = None, moduleId: int = None) -> dict:
     """
     查询字段列表 — 通过omres-cli moc-field select-name
+
+    解析建模文件导入的对象，其字段同样从这里查。查不到会导致「字段已存在」
+    被误判成「不存在」，所以这里做了两件事：键名/形状兼容，以及查空时
+    去掉 moduleId 再试一次并把原始响应打出来便于定位。
 
     Args:
         context: 工作流上下文
@@ -136,32 +170,40 @@ def query_field_list(context: WorkflowContext, mocId: int = None, moduleId: int 
     moduleId = moduleId or context.moduleId
     task_id = context.get_required_state("taskId")
 
-    body = json.dumps({
-        "taskId": str(task_id),
-        "mocId": mocId,
-        "moduleId": moduleId
-    }, ensure_ascii=False)
+    def _query(with_module: bool) -> dict:
+        payload = {"taskId": str(task_id), "mocId": mocId}
+        if with_module:
+            payload["moduleId"] = moduleId
+        return _run_cli(
+            context,
+            ["moc-field", "select-name", "--body", json.dumps(payload, ensure_ascii=False)],
+            step_name="query_field_list",
+            timeout=_DEFAULT_TIMEOUT
+        )
 
     print(f"  [DEBUG] query_field_list: taskId={task_id}, mocId={mocId}, moduleId={moduleId}")
 
-    result = _run_cli(
-        context,
-        ["moc-field", "select-name", "--body", body],
-        step_name="query_field_list",
-        timeout=_DEFAULT_TIMEOUT
-    )
+    result = _query(with_module=True)
+    field_map = _extract_field_map(result)
 
-    # 提取fieldId映射
-    field_map = {}
-    if isinstance(result, dict) and result.get("data"):
-        for field in result.get("data", []):
-            fname = field.get("fieldName")
-            fid = field.get("fieldId")
-            if fname and fid:
-                field_map[fname] = fid
+    # 带 moduleId 查不到时，去掉 moduleId 再试一次（部分接口对导入对象不认这个过滤条件）
+    if not field_map:
+        try:
+            retry_result = _query(with_module=False)
+        except StepExecutionError as e:
+            print(f"  [DEBUG] query_field_list 不带moduleId重试失败: {e.message}")
+            retry_result = None
+
+        retry_map = _extract_field_map(retry_result) if retry_result else {}
+        if retry_map:
+            print(f"  [INFO] query_field_list 带moduleId查不到字段，不带moduleId查到 {len(retry_map)} 个")
+            result, field_map = retry_result, retry_map
+        else:
+            # 两种查法都查不到：把原始响应打出来，避免后面「字段已存在但查不到」时无从定位
+            print(f"  [DEBUG] query_field_list 未解析出任何字段，原始响应: {str(result)[:500]}")
 
     context.set_state("field_map", field_map)
-    context.set_state("field_list", result.get("data", []))
+    context.set_state("field_list", _iter_data_records(result))
 
     return result
 

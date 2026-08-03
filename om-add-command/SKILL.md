@@ -131,7 +131,7 @@ result = execute_workflow(
 | 冲突对象 | 行为 |
 |----------|------|
 | 原子对象(MOC) | 创建前先 `moc select-name` 查询；已存在则复用其 `mocId`，`moc_reused=True`；即使后端仍报「已存在」，也会回查一次并复用 |
-| 字段(field) | 复用对象时先查已有字段，已存在的跳过创建；阶段6的 `update_field_info` 仍会按本次配置刷新类型/范围/默认值 |
+| 字段(field) | 复用对象时先查已有字段，已存在的跳过创建；后端报「属性名称已存在」时回查确认后复用。阶段6的 `update_field_info` 仍会按本次配置刷新类型/范围/默认值 |
 | 枚举类型/枚举项 | 已存在则复用 `cdtId`，已存在的枚举项跳过添加 |
 | 方法(method) | 本来就是复用解析出来的方法（`update`/`create`/`delete`/`get-config`），按 commands 配置删除多余方法 |
 
@@ -157,6 +157,23 @@ result = execute_workflow(
 
 只有报错语义确实是「已存在」、**并且**回查确认对象/字段真的在工程里，才会走复用分支。
 其它错误（moduleId 不对、未登录、后端异常等）照常失败返回，不会被吞掉。
+
+特别地，如果后端报「属性名称已存在」但 `moc-field select-name` 在该对象上查不到这个字段，
+工作流会**立即**报一条带诊断信息的错误（含后端原文 + 当前查到的字段列表），而不是硬撑到
+后面抛一句难以定位的「未找到字段ID」。看到这条错误时按下面的顺序查：
+
+1. `mocId` / `moduleId` 是不是指向需求要求的那个对象（日志里有 `[DEBUG] query_field_list`）
+2. 该字段名是不是被模块内其它对象占用（属性名在部分模块是模块级唯一的）
+3. 日志里的 `[DEBUG] query_field_list 未解析出任何字段，原始响应: ...`——若原始响应里其实有字段，
+   说明是响应形状/键名没兜住，把该响应贴出来即可补 `_FIELD_NAME_KEYS` / `_FIELD_ID_KEYS`
+
+### 查询结果的形状兼容
+
+同一个概念在后端不同接口里键名并不统一（`fieldName`/`attrName`、`fieldId`/`attrId`/`id`），
+`data` 也可能被包成 `{"list": [...]}`、`{"records": [...]}`。解析导入的对象走的接口尤其容易
+和新建对象的不一样，查不出来就会把「已存在」误判成「不存在」。因此列表解析统一走
+`omres_cli.iter_data_records()` + `pick_value()`，`query_field_list` 还会在带 `moduleId`
+查空时自动去掉 `moduleId` 重试一次，两次都查不到才打印原始响应。
 
 ## file_path参数说明
 - 如果file_path是ComConfig目录，需要把file_path修改到ComConfig/om，上面实例中的"D:/git/26.0/ComConfig/om"只是例子，实际路径需要你自己动态调整，请根据代码仓真实路径调整

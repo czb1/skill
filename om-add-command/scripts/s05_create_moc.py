@@ -26,6 +26,8 @@ from omres_cli import (
     run_cli as _run_cli,
     DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT,
     is_duplicate_error,
+    iter_data_records as _iter_data_records,
+    pick_value as _pick_value,
 )
 
 if TYPE_CHECKING:
@@ -56,16 +58,16 @@ def find_moc_by_name(context: WorkflowContext, mocName: str, moduleId: int = Non
         print(f"  [WARNING] 查询原子对象列表失败，无法判断 {mocName} 是否已存在: {e.message}")
         return {}
 
-    for moc in result.get("data", []) or []:
-        if moc.get("mocName") == mocName:
+    for moc in _iter_data_records(result):
+        if _pick_value(moc, ("mocName", "name")) == mocName:
             return moc
     return {}
 
 
 def _adopt_existing_moc(context: WorkflowContext, moc: dict, mocTypeId: int) -> dict:
     """把已存在的原子对象登记到上下文，后续步骤按增量修改处理"""
-    moc_name = moc.get("mocName")
-    moc_id = moc.get("mocId")
+    moc_name = _pick_value(moc, ("mocName", "name"))
+    moc_id = _pick_value(moc, ("mocId", "id"))
 
     context.set_state("mocName", moc_name)
     context.set_state("mocTypeId", moc.get("mocTypeId", mocTypeId))
@@ -235,7 +237,8 @@ def query_moc_list(context: WorkflowContext, moduleId: int = None, match_name: s
         timeout=_DEFAULT_TIMEOUT
     )
 
-    context.set_state("moc_list", result.get("data", []))
+    moc_list = _iter_data_records(result)
+    context.set_state("moc_list", moc_list)
 
     # 预查模式（显式传 match_name）只返回数据，不改写上下文
     if match_name:
@@ -243,10 +246,10 @@ def query_moc_list(context: WorkflowContext, moduleId: int = None, match_name: s
 
     # 查找当前创建的mocId
     moc_name = context.get_state("mocName")
-    if moc_name and result.get("data"):
-        for moc in result.get("data", []):
-            if moc.get("mocName") == moc_name:
-                context.set_state("mocId", moc.get("mocId"))
+    if moc_name:
+        for moc in moc_list:
+            if _pick_value(moc, ("mocName", "name")) == moc_name:
+                context.set_state("mocId", _pick_value(moc, ("mocId", "id")))
                 break
 
     return result

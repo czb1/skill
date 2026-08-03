@@ -13,7 +13,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import TYPE_CHECKING, Dict, Any, List, Optional
 from context import WorkflowContext, StepExecutionError
-from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli, DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT
+from omres_cli import (
+    find_omres_cli as _find_omres_cli,
+    run_cli as _run_cli,
+    DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT,
+    iter_data_records as _iter_data_records,
+    pick_value as _pick_value,
+)
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -242,19 +248,24 @@ def add_command_para(
         step_name="add_command_para_query_mml_para",
         timeout=_DEFAULT_TIMEOUT
     )
-    if isinstance(query_para_result, dict):
-        para_list = query_para_result.get("data", [])
-        print(f"  [DEBUG] mmlPara list共返回 {len(para_list)} 条记录")
-        for para in para_list:
-            if str(para.get("fieldId")) == str(fieldId):
-                mml_para_id = para.get("id")
-                print(f"  [DEBUG] 找到mmlParaId: {mml_para_id} for fieldId: {fieldId}")
-                break
+    para_list = _iter_data_records(query_para_result)
+    print(f"  [DEBUG] mmlPara list共返回 {len(para_list)} 条记录")
+    for para in para_list:
+        if str(_pick_value(para, ("fieldId", "attrId", "attributeId"))) == str(fieldId):
+            mml_para_id = _pick_value(para, ("id", "mmlParaId"))
+            print(f"  [DEBUG] 找到mmlParaId: {mml_para_id} for fieldId: {fieldId}")
+            break
 
     if not mml_para_id:
+        known_field_ids = [_pick_value(p, ("fieldId", "attrId", "attributeId")) for p in para_list]
         raise StepExecutionError(
             step_name="add_command_para",
-            message=f"未找到字段{fieldId}对应的mmlParaId",
+            message=(
+                f"未找到字段{fieldId}({mmlParaName})对应的mmlParaId；"
+                f"mml-para list 返回 {len(para_list)} 条，其中的fieldId为 {known_field_ids}。"
+                f"字段类型设置(update_field_info)后 mmlPara 才会生成，"
+                f"复用已有对象时请确认该字段确实属于 mocId={moc_id}"
+            ),
             context_state=context.state
         )
 

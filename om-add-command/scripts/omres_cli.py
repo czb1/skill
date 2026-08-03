@@ -113,6 +113,63 @@ def is_duplicate_error(message: str) -> bool:
     return any(marker in blob for marker in _DUPLICATE_MARKERS)
 
 
+def iter_data_records(result) -> list:
+    """
+    从 CLI 返回里取出记录列表，兼容后端各接口不一致的包装形状
+
+    见过的形状：`data` 直接是列表；`data` 是 `{"list": [...]}` / `{"records": [...]}` /
+    `{"rows": [...]}` / `{"data": [...]}`；`data` 是单个对象。
+    解析建模文件导入的对象走的接口和新建的不完全一样，形状差异会让「已存在」的
+    字段查不出来，进而误判成「不存在」——所以这里统一兜住。
+
+    Args:
+        result: run_cli 返回的 result 字典
+
+    Returns:
+        list: 记录字典列表；取不到时返回空列表
+    """
+    if not isinstance(result, dict):
+        return []
+
+    data = result.get("data")
+    if data is None:
+        data = result.get("list") or result.get("records") or result.get("rows")
+
+    if isinstance(data, list):
+        return [r for r in data if isinstance(r, dict)]
+
+    if isinstance(data, dict):
+        for key in ("list", "records", "rows", "data", "items", "content"):
+            inner = data.get(key)
+            if isinstance(inner, list):
+                return [r for r in inner if isinstance(r, dict)]
+        # data 本身就是一条记录
+        return [data]
+
+    return []
+
+
+def pick_value(record: dict, keys, default=None):
+    """
+    按候选键名依次取值（后端不同接口对同一概念的键名不统一，如 fieldName/attrName）
+
+    Args:
+        record: 记录字典
+        keys: 候选键名（按优先级）
+        default: 都取不到时的返回值
+
+    Returns:
+        第一个非空的取值
+    """
+    if not isinstance(record, dict):
+        return default
+    for key in keys:
+        value = record.get(key)
+        if value not in (None, ""):
+            return value
+    return default
+
+
 # server 不一致的告警只打一次，避免刷屏
 _server_mismatch_warned = False
 

@@ -13,7 +13,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import TYPE_CHECKING, List
 from context import WorkflowContext, StepExecutionError
-from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli, DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT
+from omres_cli import (
+    find_omres_cli as _find_omres_cli,
+    run_cli as _run_cli,
+    DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT,
+    iter_data_records as _iter_data_records,
+)
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -67,12 +72,11 @@ def add_method(
     context.set_state("last_commandType", commandType)
 
     # 方法创建后，查询获取methodId
-    query_result = query_method_info(context, mocId)
-    if isinstance(query_result, dict) and query_result.get("data"):
-        for method in query_result.get("data", []):
-            if method.get("commandType") == commandType:
-                context.set_state("methodId", method.get("methodId"))
-                break
+    query_method_info(context, mocId)
+    for method in context.get_state("method_list", []):
+        if method.get("commandType") == commandType:
+            context.set_state("methodId", method.get("methodId"))
+            break
 
     return result
 
@@ -195,7 +199,9 @@ def query_method_info(context: WorkflowContext, mocId: int = None) -> dict:
         timeout=_DEFAULT_TIMEOUT
     )
 
-    context.set_state("method_list", result.get("data", []))
+    method_list = _iter_data_records(result)
+    context.set_state("method_list", method_list)
+    print(f"  [DEBUG] query_method_info: 查到 {len(method_list)} 个方法")
 
     return result
 
