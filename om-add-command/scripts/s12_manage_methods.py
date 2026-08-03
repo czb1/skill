@@ -328,5 +328,5 @@ def query_method_info(context: WorkflowContext, mocId: int = None) -> dict:
 
 if __name__ == "__main__":
     from context import create_context
-    ctx = create_context(taskName="TEST", userName="test", passwd="test", moduleId=5)
+    ctx = create_context(taskName="TEST", userName="test", moduleId=5)
     print("方法管理模块测试需要完整流程")

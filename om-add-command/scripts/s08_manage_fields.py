@@ -417,5 +417,5 @@ def add_default_records(context: WorkflowContext, defaultRecordsList: List[Dict[
 
 if __name__ == "__main__":
     from context import create_context
-    ctx = create_context(taskName="TEST", userName="test", passwd="test", moduleId=5)
+    ctx = create_context(taskName="TEST", userName="test", moduleId=5)
     print("字段管理模块测试需要完整流程")

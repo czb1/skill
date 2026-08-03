@@ -1,15 +1,13 @@
 """
 [Main Workflow] HLBAAA MML命令创建完整流程
 
+前提: omres-cli 已由用户在上游（E2E 阶段零）完成登录，本工作流只校验登录态，不会登录。
+
 使用方法:
     from workflow import execute_workflow
-    from context import get_windows_credential
 
     result = execute_workflow(
-        userName="z00847484",
-        passwd=get_windows_credential("omtool.rnd.huawei.com", "z00847484"),
         taskName="ZL0605_HLBAAA",
-        w3Num=username,
         moduleId=5,
         moduleName="PCFNCS",
         moc_name="HLBAAA",
@@ -46,7 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from context import WorkflowContext, create_context, StepExecutionError
 
 # 导入所有Skill
-from s01_login import login
+from s01_login import ensure_authenticated, get_authenticated_username
 from s02_create_project import create_project
 from s03_upload_file import upload_file, create_zip_package
 from s04_parse_xml import parse_xml
@@ -206,10 +204,7 @@ def fetch_service_map(context: WorkflowContext) -> dict:
 
 
 def execute_workflow(
-    userName: str,
-    passwd: str,
     taskName: str,
-    w3Num: str,
     serviceName: str,
     moc_name: str,
     moc_desc_ch: str,
@@ -219,16 +214,18 @@ def execute_workflow(
     commands: List[Dict[str, str]],
     file_path: str,
     base_url: str = "http://10.243.80.228",
-    error_codes: List[Dict[str, Any]] = None
+    error_codes: List[Dict[str, Any]] = None,
+    userName: str = None,
+    w3Num: str = None,
+    passwd: str = None
 ) -> Dict[str, Any]:
     """
     执行HLBAAA MML命令创建的完整工作流程
 
+    前提：omres-cli 登录已由用户在上游（E2E 阶段零）统一完成，本函数只校验登录态。
+
     Args:
-        userName: 用户名
-        passwd: 密码
         taskName: 工程名称
-        w3Num: 工号
         serviceName: 服务名称 (如 PcfPolicyEngineService)
         moc_name: 原子对象名称
         moc_desc_ch: 原子对象中文描述
@@ -243,6 +240,9 @@ def execute_workflow(
             - code_num: 错误码数字（如58321）
             - descCh: 中文描述
             - descEn: 英文描述
+        userName: 用户名（可选，不传则从 omres-cli 登录态中获取）
+        w3Num: 工号（可选，不传则与 userName 相同）
+        passwd: 已废弃，传入会被忽略（登录由用户在阶段零统一完成）
 
     Returns:
         dict: 包含执行结果的字典
@@ -257,13 +257,15 @@ def execute_workflow(
     # 设置日志记录
     logger = setup_logging(taskName=taskName)
 
-    # 创建上下文
+    if passwd:
+        logger.warning("  ! passwd 参数已废弃并被忽略：omres-cli 登录已由用户在阶段零统一完成")
+
+    # 创建上下文（不再持有任何凭据）
     context = create_context(
         base_url=base_url,
         userName=userName,
-        passwd=passwd,
         taskName=taskName,
-        w3Num=w3Num,
+        w3Num=w3Num or userName,
         moduleId=moduleId,
         moduleName=moduleName,
         moc_name=moc_name,
@@ -293,12 +295,25 @@ def execute_workflow(
         # 记录开始时间
         context.set_state("start_time", datetime.now())
 
-        # ========== 阶段1: 登录与创建工程 ==========
-        logger.info("[阶段1] 登录与创建工程")
+        # ========== 阶段1: 登录态校验与创建工程 ==========
+        logger.info("[阶段1] 登录态校验与创建工程")
         logger.info("-" * 40)
 
-        login(context)
-        logger.info(f"  ✓ 登录成功: {userName}")
+        # 登录已在上游统一完成，这里只校验；未认证直接失败，不代为登录
+        ensure_authenticated(context)
+
+        # 用户名可以不传，从登录态里取
+        resolved_user = context.get_state("userName") or userName or get_authenticated_username(context)
+        if not resolved_user:
+            raise StepExecutionError(
+                step_name="ensure_authenticated",
+                message="无法确定当前用户名：omres-cli 登录态中没有用户名信息，请显式传入 userName",
+                context_state=context.state
+            )
+        context.userName = resolved_user
+        if not getattr(context, "w3Num", None):
+            context.w3Num = resolved_user
+        logger.info(f"  ✓ omres-cli 登录态有效: {resolved_user}")
 
         create_project(context)
         task_id = context.get_state("taskId")
@@ -951,24 +966,15 @@ def execute_workflow(
 
 
 if __name__ == "__main__":
-    from context import get_windows_credential, get_env_credential
     from datetime import datetime
 
-    username, password = get_env_credential()
-    if not password:
-        password = get_windows_credential("omtool.rnd.huawei.com", username or "z00847484")
-    if not password:
-        print("错误: 未找到凭据，请先在env_info.json中配置或使用keyring设置")
-        exit(1)
-
+    # 登录已在阶段零由用户统一完成，这里不再读取任何凭据；
+    # 未登录时 execute_workflow 会在第一步直接失败并提示重新登录。
     ts = datetime.now().strftime("%H%M%S")[4:]
     import random
     ts = f"{ts}{random.randint(10, 99)}"
     result = execute_workflow(
-        userName=username,
-        passwd=password,
         taskName=f"ZL0605_STATATTRCMD{ts}",
-        w3Num=username,
         serviceName="PcfPolicyEngineService",
         moc_name=f"STATATTRCMD{ts}",
         moc_desc_ch="话统统计对象",

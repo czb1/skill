@@ -318,17 +318,16 @@ def add_enum_item(
 
 
 if __name__ == "__main__":
-    from context import create_context, get_windows_credential
-    from s01_login import login
+    from context import create_context
+    from s01_login import ensure_authenticated
     from s02_create_project import create_project
 
     ctx = create_context(
         taskName="TEST_ZL0605",
         userName="z00847484",
-        passwd=get_windows_credential("omtool.rnd.huawei.com", "z00847484"),
         moduleId=5
     )
-    login(ctx)
+    ensure_authenticated(ctx)
     create_project(ctx)
 
     result = create_enum_type(

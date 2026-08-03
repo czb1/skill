@@ -8,7 +8,7 @@ description: OM工具自动化技能，自动化创建任意MML命令（SET/LST/
 ## 概述
 
 自动化调用OM工具API，完成任意MML命令的完整开发流程：
-- 登录账号、创建私人工程
+- 校验omres-cli登录态（登录已在上游统一完成，本skill不登录）、创建私人工程
 - 上传解析建模文件、创建原子对象
 - 创建自定义枚举类型、添加字段
 - 设置字段数据类型
@@ -24,25 +24,31 @@ description: OM工具自动化技能，自动化创建任意MML命令（SET/LST/
 5. **自动导出与MR创建**：校验通过后自动导出模型、解压压缩包、同步文件到仓库、提交Git并创建MR
 6. **错误码与Lua脚本**：支持添加错误码和生成业务处理Lua脚本
 
+## 前置条件：omres-cli 登录态
+
+**omres-cli 的登录已在上游统一完成（E2E 流程的阶段零 Step 1，由用户在自己的终端亲自执行），本 skill 不登录、也不接受任何凭据。**
+
+- 登录态保存在 `%USERPROFILE%\.omres-cli\session.json`（权限0600），对同一用户下的所有进程可见，子代理直接调用 `omres-cli` 即可。
+- 工作流第一步执行 `omres-cli auth status` 校验登录态，按退出码分支：
+
+  | 退出码 | 含义 | skill行为 |
+  |--------|------|-----------|
+  | 0 | 已认证 | 继续执行后续步骤 |
+  | 3 | 未认证 / 会话已过期 | **立即失败返回**，提示主代理让用户重新执行 `omres-cli auth login`，用户确认后从本阶段重跑 |
+  | 1 | 其它错误（后端不可达等） | 立即失败返回，说明不是认证问题，不要引导重新登录 |
+
+- **严禁**在本 skill 中执行 `omres-cli auth login`，严禁索要、读取、传递或落盘任何账号密码。
+- `execute_workflow` 不再需要 `passwd` 参数；`userName` / `w3Num` 也可以省略，默认从登录态中解析。为兼容旧调用，传入 `passwd` 不会报错，但会被忽略并打印警告。
+
 ## 工作流程
 
 ### 主入口
 
 ```python
 from workflow import execute_workflow
-from context import get_env_credential, get_windows_credential
-
-# 从env_info.json获取用户名和密码
-username, password = get_env_credential()
-if not password:
-    # 备用：从keyring获取
-    password = get_windows_credential("omtool.rnd.huawei.com", username)
 
 result = execute_workflow(
-    userName=username,
-    passwd=password,
     taskName="ZL0605_STATOBJ",
-    w3Num=username,
     serviceName="PcfPolicyEngineService",  # 使用服务名称，moduleId和moduleName自动映射
     moc_name="STATSESOBJ",
     moc_desc_ch="话统统计对象",
@@ -238,49 +244,31 @@ workflow.py通过`fetch_service_map()`在创建工程后调用 `omres-cli overal
 {"name": "OBJPARA", "type": "STRING", "isKey": 0, "range": "5~15", "maxLength": 15}
 ```
 
-## 凭据管理
+## 登录态说明
 
-### 设置凭据（首次使用）
-
-```bash
-python -c "from context import set_windows_credential; set_windows_credential('omtool.rnd.huawei.com', 'z00847484', 'your_password')"
-```
-
-### 获取凭据
-
-执行workflow.py时会自动从以下顺序读取凭据：
-1. `.e2e_files/env_info.json`中的username和password
-2. Windows凭据管理器（keyring）
+- 不需要在本 skill 中配置或读取任何凭据：`.e2e_files/env_info.json` 里的密码、Windows凭据管理器（keyring）都不再使用。
+- 登录态由 `omres-cli` 自行维护，后端未下发过期时间时按默认8小时判定（可用 `OMRES_SESSION_TTL_HOURS` 覆盖）。
+- 如需确认会话在后端真实有效（而不只是本地存在），可用 `omres-cli auth status --online` 额外探活；`ensure_authenticated(context, online=True)` 对应该行为。
+- 会话中途失效时，工作流会在第一步就以「未认证」失败返回，由主代理提示用户重新登录后**从本阶段重跑**，skill 不得自行重登。
 
 ## 执行方式
 
 在PowerShell中执行（Windows环境）：
 
-注意下面的path/to/upcf-add-command要你自己去获取upcf-add-command这个skill的路径。
+注意下面的path/to/skill要你自己去获取本skill（目录名 `om-add-command`，在E2E流程中以 `upcf-add-command` 的名义被委派）的实际路径。
 ```powershell
-cd "path/to/upcf-add-command/scripts"; python -c "
+cd "path/to/skill/scripts"; python -c "
 import sys
 sys.stdout = open('workflow_output.log', 'w', encoding='utf-8')
 sys.stderr = sys.stdout
 from workflow import execute_workflow
-from context import get_env_credential, get_windows_credential
 from datetime import datetime
 import random
-
-username, password = get_env_credential()
-if not password:
-    password = get_windows_credential('omtool.rnd.huawei.com', username or 'z00847484')
-if not password:
-    print('错误: 未找到凭据')
-    exit(1)
 
 ts = datetime.now().strftime('%H%M%S')[2:] + str(random.randint(10, 99))
 
 result = execute_workflow(
-    userName=username,
-    passwd=password,
     taskName=f'ZL0605_DLBSCTPBUFFCFG{ts}',
-    w3Num=username,
     serviceName='PcfDiamLoadBalanceService',
     moc_name='DLBSCTPBUFFCFG',
     moc_desc_ch='DLB SCTP缓冲区告警配置管理',
@@ -349,6 +337,7 @@ print(result)
 ```
 
 **注意**：
+- 执行前无需任何登录动作；若 `omres-cli auth status` 返回未认证，脚本会在第一步立即失败并返回提示，此时直接把失败原因回报主代理，**不要尝试登录或索要密码**
 - 工作流程涉及多次HTTP API调用，预计需要3-5分钟
 - 执行时超时时间设置为**20分钟（1200000ms）**
 - 日志输出重定向到`workflow_output.log`避免截断
@@ -460,6 +449,7 @@ print(result)
 | 脚本 | 功能 |
 |------|------|
 | workflow.py | 主工作流入口 |
+| s01_login.py | 登录态校验（`ensure_authenticated`，只校验不登录） |
 | s15_mml_commands.py | MML命令管理 |
 | s12_manage_methods.py | 方法管理 |
 | s17_validation.py | 校验与导出 |

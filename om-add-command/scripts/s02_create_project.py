@@ -189,11 +189,11 @@ def create_project(context: WorkflowContext, taskName: str = None, neType: str =
 
 
 if __name__ == "__main__":
-    from context import create_context, get_windows_credential
-    from s01_login import login
+    from context import create_context
+    from s01_login import ensure_authenticated
     
-    ctx = create_context(taskName="TEST_ZL0605", userName="z00847484", passwd=get_windows_credential("omtool.rnd.huawei.com", "z00847484"))
-    login(ctx)
+    ctx = create_context(taskName="TEST_ZL0605", userName="z00847484")
+    ensure_authenticated(ctx)
     result = create_project(ctx)
     print(f"创建工程结果: {result}")
     print(f"taskId: {ctx.get_state('taskId')}")

@@ -718,5 +718,5 @@ def copy_lua_script_to_repo(
 
 if __name__ == "__main__":
     from context import create_context
-    ctx = create_context(taskName="TEST", userName="test", passwd="test", moduleId=7)
+    ctx = create_context(taskName="TEST", userName="test", moduleId=7)
     print("错误码处理模块测试需要完整流程")

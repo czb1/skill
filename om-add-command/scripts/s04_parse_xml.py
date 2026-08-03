@@ -195,18 +195,17 @@ def parse_xml(context: WorkflowContext, fileName: str = None, path: str = None, 
 
 
 if __name__ == "__main__":
-    from context import create_context, get_windows_credential
-    from s01_login import login
+    from context import create_context
+    from s01_login import ensure_authenticated
     from s02_create_project import create_project
     from s03_upload_file import upload_file
 
     ctx = create_context(
         taskName="TEST_ZL0605",
         userName="z00847484",
-        passwd=get_windows_credential("omtool.rnd.huawei.com", "z00847484"),
         file_path="D:/git/26.0/ComConfig/om/ZL0605.zip"
     )
-    login(ctx)
+    ensure_authenticated(ctx)
     create_project(ctx)
     upload_file(ctx)
     result = parse_xml(ctx)
