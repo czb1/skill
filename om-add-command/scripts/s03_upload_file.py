@@ -14,37 +14,10 @@ import json
 import shutil
 from typing import TYPE_CHECKING, List
 from context import WorkflowContext, StepExecutionError
+from omres_cli import find_omres_cli as _find_omres_cli
 
 if TYPE_CHECKING:
     from typing import Optional
-
-
-def _find_omres_cli() -> str:
-    """查找omres-cli可执行文件路径"""
-    cli_path = shutil.which("omres-cli") or shutil.which("omres-cli.exe")
-    if cli_path:
-        return cli_path
-
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    candidates = [
-        os.path.join(project_root, "omres-cli", "omres-cli", "omres-cli.exe"),
-        os.path.join(project_root, "omres-cli", "omres-cli"),
-    ]
-    for candidate in candidates:
-        if os.path.isfile(candidate):
-            return candidate
-
-    cwd = os.getcwd()
-    for _ in range(3):
-        candidate = os.path.join(cwd, "omres-cli", "omres-cli", "omres-cli.exe")
-        if os.path.isfile(candidate):
-            return candidate
-        parent = os.path.dirname(cwd)
-        if parent == cwd:
-            break
-        cwd = parent
-
-    return "omres-cli"
 
 
 def create_zip_package(source_dir: str, output_path: str = None) -> str:

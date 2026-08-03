@@ -15,138 +15,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import TYPE_CHECKING, List, Dict, Any
 from context import WorkflowContext, StepExecutionError
+from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli
 
 if TYPE_CHECKING:
     from typing import Optional
 
-CONFIG_PATH = 'D:/git/20.0_master/upcfwiki/Agent/upcf-mr-reviewer/config.json'
-
-
-def _find_omres_cli() -> str:
-    """查找omres-cli可执行文件路径"""
-    cli_path = shutil.which("omres-cli") or shutil.which("omres-cli.exe")
-    if cli_path:
-        return cli_path
-
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    candidates = [
-        os.path.join(project_root, "omres-cli", "omres-cli", "omres-cli.exe"),
-        os.path.join(project_root, "omres-cli", "omres-cli"),
-    ]
-    for candidate in candidates:
-        if os.path.isfile(candidate):
-            return candidate
-
-    cwd = os.getcwd()
-    for _ in range(3):
-        candidate = os.path.join(cwd, "omres-cli", "omres-cli", "omres-cli.exe")
-        if os.path.isfile(candidate):
-            return candidate
-        parent = os.path.dirname(cwd)
-        if parent == cwd:
-            break
-        cwd = parent
-
-    return "omres-cli"
-
-
-def _run_cli(context: WorkflowContext, args: list, step_name: str, timeout: int = 120) -> dict:
-    """
-    执行omres-cli命令并解析JSON-RPC 2.0输出
-
-    Args:
-        context: 工作流上下文
-        args: 命令参数列表（不含omres-cli本身）
-        step_name: 步骤名称（用于错误信息）
-        timeout: 超时秒数
-
-    Returns:
-        dict: JSON-RPC result字段
-
-    Raises:
-        StepExecutionError: 执行失败时抛出
-    """
-    cli_path = _find_omres_cli()
-    cmd = [cli_path] + args
-
-    if context.base_url:
-        cmd.extend(["--server", context.base_url])
-
-    try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True, text=True, encoding='utf-8', timeout=timeout
-        )
-    except FileNotFoundError:
-        raise StepExecutionError(
-            step_name=step_name,
-            message=f"omres-cli未找到: {cli_path}，请确认omres-cli已安装或在项目目录下",
-            context_state=context.state
-        )
-    except subprocess.TimeoutExpired:
-        raise StepExecutionError(
-            step_name=step_name,
-            message=f"omres-cli命令执行超时",
-            context_state=context.state
-        )
-
-    output = proc.stdout.strip() if proc.stdout else ""
-
-    if not output:
-        stderr_msg = proc.stderr.strip() if proc.stderr else ""
-        raise StepExecutionError(
-            step_name=step_name,
-            message=f"命令返回为空, stderr: {stderr_msg[:200]}",
-            context_state=context.state
-        )
-
-    try:
-        rpc_output = json.loads(output)
-    except json.JSONDecodeError as e:
-        raise StepExecutionError(
-            step_name=step_name,
-            message=f"响应JSON解析失败: {e}, 原始响应: {output[:200]}",
-            context_state=context.state
-        )
-
-    # 检查JSON-RPC错误
-    if "error" in rpc_output:
-        error = rpc_output["error"]
-        error_msg = error.get("message", "未知错误")
-        if "data" in error:
-            data = error["data"]
-            if isinstance(data, dict):
-                error_msg = data.get("msg", data.get("message", error_msg))
-            elif isinstance(data, str):
-                error_msg = data
-        raise StepExecutionError(
-            step_name=step_name,
-            message=f"命令执行失败: {error_msg}",
-            context_state=context.state
-        )
-
-    # 提取result
-    result = rpc_output.get("result", {})
-
-    # 检查业务状态码
-    if isinstance(result, dict):
-        code = result.get("code")
-        if code is not None and code != 0:
-            raise StepExecutionError(
-                step_name=step_name,
-                message=f"业务执行失败: {result.get('msg', result.get('message', '未知错误'))}",
-                context_state=context.state
-            )
-
-        # 兼容旧格式：直接包含status字段
-        if "status" in result and not result.get("status"):
-            raise StepExecutionError(
-                step_name=step_name,
-                message=f"业务执行失败: {result.get('message', '未知错误')}",
-                context_state=context.state
-            )
-
-    return result
+# CodeHub 相关默认值（可用环境变量覆盖）。
+# 鉴权由用户在阶段零统一完成的 `codehub-cli auth login` 提供，本脚本不持有任何 token。
+CODEHUB_PROJECT = os.environ.get("CODEHUB_PROJECT", "UPCF/ComConfig")
+CODEHUB_HOST = os.environ.get("CODEHUB_HOST", "https://codehub-y.huawei.com")
 
 
 def shield_errors(context: WorkflowContext, error_codes: str = "2017") -> dict:
@@ -408,13 +285,12 @@ def get_export_status(context: WorkflowContext) -> dict:
     return result
 
 
-def load_codehub_token() -> str:
-    """Load CodeHub token from config."""
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-            return config.get('codehub_token', '')
-    return ''
+def _find_codehub_cli() -> str:
+    """查找codehub-cli可执行文件路径（安装与登录由阶段零统一完成）"""
+    override = os.environ.get("CODEHUB_CLI")
+    if override and os.path.isfile(override):
+        return override
+    return shutil.which("codehub-cli") or shutil.which("codehub-cli.cmd") or "codehub-cli"
 
 
 def extract_zip_package(zip_path: str, extract_to: str, service_name: str = None) -> str:
@@ -648,57 +524,142 @@ def git_commit_and_push(repo_path: str, branch_name: str, commit_message: str, c
         )
 
 
+def _parse_mr_output(output: str) -> dict:
+    """
+    从 codehub-cli mr create 的输出中提取MR链接与IID
+
+    先按JSON解析（兼容外层包一层 data/result 的情况），失败再用正则兜底。
+
+    Args:
+        output: codehub-cli 的标准输出
+
+    Returns:
+        dict: {'mr_url': str|None, 'mr_iid': int|str|None}
+    """
+    import re
+
+    mr_url = None
+    mr_iid = None
+
+    try:
+        parsed = json.loads(output)
+    except (json.JSONDecodeError, TypeError):
+        parsed = None
+
+    if isinstance(parsed, dict):
+        node = parsed
+        for key in ("result", "data", "mr", "mergeRequest", "merge_request"):
+            inner = node.get(key)
+            if isinstance(inner, dict):
+                node = inner
+        for key in ("web_url", "webUrl", "url", "mr_url", "mrUrl"):
+            if isinstance(node.get(key), str):
+                mr_url = node[key]
+                break
+        for key in ("iid", "mr_iid", "mrIid", "id"):
+            if node.get(key) not in (None, ""):
+                mr_iid = node[key]
+                break
+
+    if not mr_url:
+        match = re.search(r'https?://\S+?/merge_requests/(\d+)', output or "")
+        if match:
+            mr_url = match.group(0).rstrip('",)')
+            mr_iid = mr_iid or match.group(1)
+
+    if mr_iid is None and mr_url:
+        match = re.search(r'/merge_requests/(\d+)', mr_url)
+        if match:
+            mr_iid = match.group(1)
+
+    return {'mr_url': mr_url, 'mr_iid': mr_iid}
+
+
 def create_mr_on_codehub(source_branch: str, target_branch: str = "master",
                          title: str = None, description: str = None,
-                         project_id: str = "UPCF%2FComConfig") -> dict:
+                         project: str = None, host: str = None,
+                         project_id: str = None) -> dict:
     """
-    在CodeHub上创建MR
+    通过 codehub-cli 在CodeHub上创建MR
+
+    鉴权复用 `codehub-cli auth login` 的登录态（由用户在阶段零统一完成），
+    本函数不读取、不传递任何 token；未认证时直接失败返回，由主代理提示用户重新登录。
 
     Args:
         source_branch: 源分支
         target_branch: 目标分支
         title: MR标题
         description: MR描述
-        project_id: 项目ID
+        project: 项目路径（如 UPCF/ComConfig），默认取 CODEHUB_PROJECT
+        host: CodeHub地址，默认取 CODEHUB_HOST
+        project_id: 已废弃，等价于project（兼容旧调用，支持URL编码形式）
 
     Returns:
         dict: 包含mr_url和mr_iid的字典
+
+    Raises:
+        StepExecutionError: codehub-cli 缺失、未认证或创建失败时抛出
     """
-    import requests
-    import urllib3
-    urllib3.disable_warnings()
+    from urllib.parse import unquote
 
-    token = load_codehub_token()
-    if not token:
-        raise StepExecutionError(
-            step_name="create_mr_on_codehub",
-            message="CodeHub token未配置"
-        )
-
-    url = f'https://codehub-y.huawei.com/api/v4/projects/{project_id}/merge_requests'
-    headers = {'PRIVATE-TOKEN': token}
+    project = project or (unquote(project_id) if project_id else None) or CODEHUB_PROJECT
+    host = host or CODEHUB_HOST
 
     if title is None:
-        title = f"[WIP] feat: 添加MML命令"
+        title = "[WIP] feat: 添加MML命令"
 
-    data = {
-        'source_branch': source_branch,
-        'target_branch': target_branch,
-        'title': title,
-        'description': description or ''
-    }
+    cli_path = _find_codehub_cli()
+    cmd = [
+        cli_path, "mr", "create",
+        "-p", project,
+        "-H", host,
+        "--source-branch", source_branch,
+        "--target-branch", target_branch,
+        "--title", title,
+        "--description", description or "",
+    ]
 
-    resp = requests.post(url, headers=headers, data=data, verify=False)
-
-    if resp.status_code == 201:
-        result = resp.json()
-        print(f"  ✓ MR创建成功: {result.get('web_url')}")
-        return {'mr_url': result.get('web_url'), 'mr_iid': result.get('iid')}
-    else:
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=120)
+    except FileNotFoundError:
         raise StepExecutionError(
             step_name="create_mr_on_codehub",
-            message=f"MR创建失败: {resp.status_code} - {resp.text}"
+            message=f"codehub-cli未找到: {cli_path}。codehub-cli 的安装与登录由阶段零统一完成，请确认其已安装并在PATH中"
         )
+    except subprocess.TimeoutExpired:
+        raise StepExecutionError(
+            step_name="create_mr_on_codehub",
+            message="codehub-cli mr create 执行超时"
+        )
+
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+
+    if proc.returncode != 0:
+        detail = stderr or stdout
+        if any(kw in detail.lower() for kw in ("unauthorized", "not logged in", "401", "认证", "登录")):
+            raise StepExecutionError(
+                step_name="create_mr_on_codehub",
+                message=(
+                    f"codehub-cli 未认证: {detail[:300]}。登录由用户在自己的终端统一完成，"
+                    "本 skill 不会代为登录，请回报主代理提示用户执行 `codehub-cli auth login` 后重跑本阶段"
+                )
+            )
+        raise StepExecutionError(
+            step_name="create_mr_on_codehub",
+            message=f"MR创建失败(exit={proc.returncode}): {detail[:300]}"
+        )
+
+    mr_info = _parse_mr_output(stdout or stderr)
+
+    if not mr_info['mr_url']:
+        raise StepExecutionError(
+            step_name="create_mr_on_codehub",
+            message=f"MR创建命令已成功执行，但未能从输出中解析出MR链接: {(stdout or stderr)[:300]}"
+        )
+
+    print(f"  ✓ MR创建成功: {mr_info['mr_url']}")
+    return mr_info
 
 
 def read_command_ids_from_moc(repo_path: str, service_name: str, moc_name: str) -> dict:

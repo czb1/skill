@@ -42,6 +42,7 @@ if sys.platform == 'win32' and sys.stdout and hasattr(sys.stdout, 'buffer'):
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from context import WorkflowContext, create_context, StepExecutionError
+from omres_cli import find_omres_cli as _find_omres_cli, run_cli as _run_cli
 
 # 导入所有Skill
 from s01_login import ensure_authenticated, get_authenticated_username
@@ -95,76 +96,6 @@ def setup_logging(log_dir: str = None, taskName: str = None) -> logging.Logger:
 
 
 SERVICE_MAP = {}
-
-
-def _find_omres_cli() -> str:
-    """查找omres-cli可执行文件路径"""
-    import shutil
-    cli_path = shutil.which("omres-cli") or shutil.which("omres-cli.exe")
-    if cli_path:
-        return cli_path
-
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    candidates = [
-        os.path.join(project_root, "omres-cli", "omres-cli", "omres-cli.exe"),
-        os.path.join(project_root, "omres-cli", "omres-cli"),
-    ]
-    for candidate in candidates:
-        if os.path.isfile(candidate):
-            return candidate
-
-    cwd = os.getcwd()
-    for _ in range(3):
-        candidate = os.path.join(cwd, "omres-cli", "omres-cli", "omres-cli.exe")
-        if os.path.isfile(candidate):
-            return candidate
-        parent = os.path.dirname(cwd)
-        if parent == cwd:
-            break
-        cwd = parent
-
-    return "omres-cli"
-
-
-def _run_cli(context: WorkflowContext, args: list, step_name: str, timeout: int = 60) -> dict:
-    """执行omres-cli命令并解析JSON-RPC 2.0输出"""
-    import subprocess, json as _json
-    cli_path = _find_omres_cli()
-    cmd = [cli_path] + args
-    if context.base_url:
-        cmd.extend(["--server", context.base_url])
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=timeout)
-    except FileNotFoundError:
-        raise StepExecutionError(step_name=step_name, message=f"omres-cli未找到: {cli_path}", context_state=context.state)
-    except subprocess.TimeoutExpired:
-        raise StepExecutionError(step_name=step_name, message="omres-cli命令执行超时", context_state=context.state)
-    output = proc.stdout.strip() if proc.stdout else ""
-    if not output:
-        stderr_msg = proc.stderr.strip() if proc.stderr else ""
-        raise StepExecutionError(step_name=step_name, message=f"命令返回为空, stderr: {stderr_msg[:200]}", context_state=context.state)
-    try:
-        rpc_output = _json.loads(output)
-    except _json.JSONDecodeError as e:
-        raise StepExecutionError(step_name=step_name, message=f"响应JSON解析失败: {e}", context_state=context.state)
-    if "error" in rpc_output:
-        error = rpc_output["error"]
-        error_msg = error.get("message", "未知错误")
-        if "data" in error:
-            data = error["data"]
-            if isinstance(data, dict):
-                error_msg = data.get("msg", data.get("message", error_msg))
-            elif isinstance(data, str):
-                error_msg = data
-        raise StepExecutionError(step_name=step_name, message=f"命令执行失败: {error_msg}", context_state=context.state)
-    result = rpc_output.get("result", {})
-    if isinstance(result, dict):
-        code = result.get("code")
-        if code is not None and code != 0:
-            raise StepExecutionError(step_name=step_name, message=f"业务执行失败: {result.get('msg', result.get('message', '未知错误'))}", context_state=context.state)
-        if "status" in result and not result.get("status"):
-            raise StepExecutionError(step_name=step_name, message=f"业务执行失败: {result.get('message', '未知错误')}", context_state=context.state)
-    return result
 
 
 def fetch_service_map(context: WorkflowContext) -> dict:

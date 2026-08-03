@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import TYPE_CHECKING
 from context import WorkflowContext, StepExecutionError
+from omres_cli import find_omres_cli as _find_omres_cli
 
 if TYPE_CHECKING:
     from typing import Optional
@@ -36,42 +37,6 @@ _RELOGIN_HINT = (
     "本 skill 不会也不允许代为登录。请主代理提示用户执行 "
     "`omres-cli auth login --username <域账号>`，用户确认完成后从本阶段重跑。"
 )
-
-
-def _find_omres_cli() -> str:
-    """
-    查找omres-cli可执行文件路径
-
-    Returns:
-        str: omres-cli可执行文件的完整路径
-    """
-    # 1. 优先从PATH查找
-    cli_path = shutil.which("omres-cli") or shutil.which("omres-cli.exe")
-    if cli_path:
-        return cli_path
-
-    # 2. 从项目相对路径查找
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    candidates = [
-        os.path.join(project_root, "omres-cli", "omres-cli", "omres-cli.exe"),
-        os.path.join(project_root, "omres-cli", "omres-cli"),
-    ]
-    for candidate in candidates:
-        if os.path.isfile(candidate):
-            return candidate
-
-    # 3. 从当前工作目录向上查找
-    cwd = os.getcwd()
-    for _ in range(3):
-        candidate = os.path.join(cwd, "omres-cli", "omres-cli", "omres-cli.exe")
-        if os.path.isfile(candidate):
-            return candidate
-        parent = os.path.dirname(cwd)
-        if parent == cwd:
-            break
-        cwd = parent
-
-    return "omres-cli"  # fallback, rely on PATH
 
 
 def _read_session() -> dict:

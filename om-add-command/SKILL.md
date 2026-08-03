@@ -21,7 +21,7 @@ description: OM工具自动化技能，自动化创建任意MML命令（SET/LST/
 2. **自定义参数配置**：通过params数组定义每个命令的输入/输出参数
 3. **动态方法管理**：根据commands配置自动删除不需要的方法
 4. **多枚举类型支持**：为每个枚举字段自动创建独立的枚举类型，枚举项从range字符串自动解析（如"SUBID（0）APN （1）"）
-5. **自动导出与MR创建**：校验通过后自动导出模型、解压压缩包、同步文件到仓库、提交Git并创建MR
+5. **自动导出与MR创建**：校验通过后自动导出模型、解压压缩包、同步文件到仓库、提交Git并通过 `codehub-cli` 创建MR（复用统一登录，无需token）
 6. **错误码与Lua脚本**：支持添加错误码和生成业务处理Lua脚本
 
 ## 前置条件：omres-cli 登录态
@@ -39,6 +39,20 @@ description: OM工具自动化技能，自动化创建任意MML命令（SET/LST/
 
 - **严禁**在本 skill 中执行 `omres-cli auth login`，严禁索要、读取、传递或落盘任何账号密码。
 - `execute_workflow` 不再需要 `passwd` 参数；`userName` / `w3Num` 也可以省略，默认从登录态中解析。为兼容旧调用，传入 `passwd` 不会报错，但会被忽略并打印警告。
+
+### codehub-cli 登录态（创建MR用）
+
+校验通过后的「提交Git并创建MR」同样复用统一登录：MR 通过 `codehub-cli mr create` 创建，鉴权来自阶段零完成的 `codehub-cli auth login`，**skill 不再读取任何 CodeHub token**（原先从本地 `config.json` 读 `codehub_token` 的方式已废弃）。
+
+- 项目与Host默认 `UPCF/ComConfig`、`https://codehub-y.huawei.com`，可用环境变量 `CODEHUB_PROJECT` / `CODEHUB_HOST` 覆盖，也可在调用 `create_mr_on_codehub()` 时用 `project` / `host` 参数传入。
+- codehub-cli 不在 PATH 时可用 `CODEHUB_CLI` 环境变量指定可执行文件全路径。
+- 若 codehub-cli 报未认证，同样是**直接失败返回**，由主代理提示用户执行 `codehub-cli auth login` 后重跑，不代为登录。
+
+### omres-cli 可执行文件的定位
+
+所有脚本统一走 `omres_cli.find_omres_cli()`，查找顺序：`OMRES_CLI` 环境变量 → PATH → 阶段零安装目录 `~/omres-cli/` → 裸命令名。
+
+> 阶段零用 `setx` 写入的 PATH 对**已启动**的进程不生效，所以保留了对安装目录的回落；如果调用方所在进程 PATH 里没有 omres-cli，用 `OMRES_CLI` 指定全路径即可。
 
 ## 工作流程
 
@@ -449,6 +463,7 @@ print(result)
 | 脚本 | 功能 |
 |------|------|
 | workflow.py | 主工作流入口 |
+| omres_cli.py | omres-cli 定位与调用的统一封装（`find_omres_cli` / `run_cli`） |
 | s01_login.py | 登录态校验（`ensure_authenticated`，只校验不登录） |
 | s15_mml_commands.py | MML命令管理 |
 | s12_manage_methods.py | 方法管理 |
